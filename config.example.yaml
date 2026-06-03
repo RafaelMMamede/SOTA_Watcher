@@ -8,9 +8,9 @@ max_results_per_query: 100
 # Replace with your own email for OpenAlex polite pool access.
 mailto: your_email@example.com
 
-from_publication_date: "2024-01-01"
+from_publication_date: "2025-01-01"
 # Leave unset to use today's date automatically.
-to_publication_date: "2024-12-31"
+to_publication_date: "2025-12-31"
 
 sleep_seconds: 1.0
 
