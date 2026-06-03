@@ -1,0 +1,6 @@
+pandas
+openpyxl
+pyyaml
+feedparser
+requests
+tqdm

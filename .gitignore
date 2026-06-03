@@ -1,0 +1,61 @@
+# =========================
+# Local configuration
+# =========================
+config.yaml
+config.local.yaml
+*.local.yaml
+.env
+.env.*
+
+# =========================
+# Prompts
+# =========================
+prompts/*.txt
+
+# =========================
+# Outputs / generated files
+# =========================
+output/
+*.xlsx
+*.csv
+*.md
+*.jsonl
+
+# =========================
+# Downloaded papers / PDFs
+# =========================
+pdfs/
+papers/
+downloads/
+full_text/
+fulltext/
+
+# =========================
+# Python cache
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+env/
+
+# =========================
+# Jupyter / notebooks
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# OS / editor files
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
