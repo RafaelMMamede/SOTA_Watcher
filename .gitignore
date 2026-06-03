@@ -3,6 +3,7 @@
 # =========================
 config.yaml
 config.local.yaml
+search_terms.yaml
 *.local.yaml
 .env
 .env.*

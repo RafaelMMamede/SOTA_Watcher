@@ -1,0 +1,30 @@
+topics:
+  topic_1:
+    label: "Example research topic 1"
+    queries:
+      - example query for topic 1
+      - another example query for topic 1
+    topic_terms:
+      example keyword: 5
+      another keyword: 4
+      related concept: 3
+
+  topic_2:
+    label: "Example research topic 2"
+    queries:
+      - example query for topic 2
+      - another example query for topic 2
+    topic_terms:
+      method keyword: 5
+      evaluation keyword: 4
+      benchmark keyword: 3
+
+generic_priority_terms:
+  generalization: 3
+  benchmark: 3
+  dataset: 2
+  evaluation: 2
+  comparison: 2
+  survey: 2
+  state-of-the-art: 2
+  reproducibility: 2
