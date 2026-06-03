@@ -1,0 +1,65 @@
+sources:
+  - openalex
+
+search_terms_path: search_terms.yaml
+
+max_results_per_query: 100
+
+# Replace with your own email for OpenAlex polite pool access.
+mailto: your_email@example.com
+
+from_publication_date: "2024-01-01"
+# Leave unset to use today's date automatically.
+to_publication_date: "2024-12-31"
+
+sleep_seconds: 1.0
+
+output_dir: output
+sota_table_path: output/sota_table.xlsx
+seen_papers_path: output/seen_papers.csv
+recommended_summary_path: output/recommended_papers_summary.md
+
+min_triage_score: 15
+drop_existing_below_min_score: true
+
+include_repositories: false
+include_datasets: true
+include_preprints: true
+
+scoring:
+  title_weight: 3
+  abstract_weight: 1
+  query_weight: 2
+  generic_priority_weight: 1
+
+  journal_bonus: 2
+  conference_bonus: 3
+  preprint_bonus: 1
+  dataset_bonus: 1
+
+  repository_penalty: 3
+  report_penalty: 4
+  missing_abstract_penalty: 1
+
+  citation_weight: 0.25
+  max_citation_bonus: 5
+
+ollama:
+  enabled: true
+  model: qwen2.5:7b
+  base_url: http://localhost:11434
+  classify_min_triage_score: 25
+  timeout_seconds: 180
+  temperature: 0.0
+  max_papers_per_run: 300
+
+ollama_deep_analysis:
+  enabled: false
+  model: deepseek-r1:8b
+  base_url: http://localhost:11434
+  only_priorities:
+    - read
+    - skim
+  timeout_seconds: 300
+  temperature: 0.0
+  max_papers_per_run: 20
