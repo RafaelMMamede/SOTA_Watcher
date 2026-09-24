@@ -106,7 +106,7 @@ def screen_extraction(extraction, criteria, cfg, folder):
     base=cfg.get('base_url','http://localhost:11434').rstrip('/')
     timeout=cfg.get('timeout_seconds',300)
     ctx=cfg.get('num_ctx',32768)
-    output=cfg.get('num_predict',2048)
+    output=cfg.get('num_predict',8192)
     if ctx <= output + 4096 or output < 1:
         raise ValueError('Context must leave room for instructions, evidence and output.')
     # UTF-8 bytes are a conservative upper estimate for input tokens; leave room
@@ -160,8 +160,14 @@ def screen_extraction(extraction, criteria, cfg, folder):
             response_data=response.json()
             write_json(response_path,response_data)
         if response_data.get('done') is not True or response_data.get('done_reason') not in {'stop',None}:
-            response_path.unlink(missing_ok=True)
-            raise ValueError('Model output incomplete; increase output budget.')
+            reason = response_data.get('done_reason')
+            eval_count = response_data.get('eval_count')
+            response_path.replace(target/f'part_{index}_incomplete.json')
+            raise ValueError(
+                f'Model output incomplete: done_reason={reason!r}, '
+                f'eval_count={eval_count!r}, num_predict={output}. '
+                'Increase screening.num_predict or reduce the per-part input budget.'
+            )
         try:
             content = response_data['message']['content']
         except (KeyError, TypeError):
