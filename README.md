@@ -97,7 +97,10 @@ local harvesting ends. Capped OAI results are in harvest order, not globally ran
 
 Set `screening.enabled: true`, review the eligibility criteria, then ensure your
 configured Ollama model is installed and the server is running. The initial
-model setting is `qwen3.5:9b`, thinking disabled, 32K context.
+model setting is `qwen3.5:9b`, low thinking, 32K context. The request supplies
+the JSON schema both through Ollama's `format` field and in the prompt. A single
+surrounding Markdown JSON fence is tolerated before the same strict schema and
+page-evidence validation is applied.
 
 All current candidates are processed, up to `max_papers_per_run`; the remainder
 are `deferred` and retained. Full-text acquisition is independent of discovery:
@@ -121,6 +124,10 @@ URLs are preferred when metadata supplies them. See
 [fulltext/README.md](fulltext/README.md) for resolver and standalone PDF details.
 Extraction disables OCR; empty/scanned pages require manual review. Tables,
 equations, figures and reading order may remain imperfect.
+
+Qwen 3.5 users should avoid `think: false` when relying on Ollama structured
+outputs; some Ollama/Qwen 3.5 combinations have returned unconstrained prose in
+that mode. The example configuration therefore uses `think: low`.
 
 Every extracted page is sent in bounded parts to `/api/chat`. No pages are silently
 truncated. A conservative UTF-8 byte budget leaves space for instructions/schema
