@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
-from screening.ollama import validate_result, aggregate, screen_extraction
+from screening.ollama import validate_result, aggregate, parse_structured_content, screen_extraction
 from screening.pipeline import screen_papers
 from utils.deduplication import merge_with_existing
 import pandas as pd
@@ -21,6 +21,16 @@ class ScreeningTests(unittest.TestCase):
         for value in (result(9),result(1,'Invented quote'),{'criteria':[]}):
             with self.assertRaises(ValueError):
                 validate_result(value,CRITERIA,PAGES)
+    def test_structured_parser_accepts_only_plain_or_fenced_json(self):
+        payload = result()
+        plain = json.dumps(payload)
+        fenced = "~~~json\n" + plain + "\n~~~"
+        fenced = fenced.replace("~~~", "```")
+        self.assertEqual(parse_structured_content(plain), payload)
+        self.assertEqual(parse_structured_content(fenced), payload)
+        with self.assertRaisesRegex(ValueError, "valid JSON"):
+            parse_structured_content("Here is the result: " + plain)
+
     def test_conflicting_parts_are_uncertain(self):
         rows=[result()['criteria'],result(assessment='not_met')['criteria']]
         self.assertEqual(aggregate(rows,CRITERIA)['eligibility_decision'],'uncertain')
