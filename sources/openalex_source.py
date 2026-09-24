@@ -180,13 +180,16 @@ def _to_postfix(tokens: list[str]) -> list[str]:
 
 def _search_leaf(token: str) -> dict:
     quoted = len(token) >= 2 and token.startswith('"') and token.endswith('"')
-    value = token[1:-1] if quoted else token
-    if not value:
+    raw_value = token[1:-1] if quoted else token
+    if not raw_value:
         raise ValueError("OpenAlex query contains an empty term.")
-    if not quoted and ("*" in value or "?" in value):
+    if not quoted and ("*" in raw_value or "?" in raw_value):
         raise ValueError(
             "OpenAlex wildcards must be quoted when using title/abstract search."
         )
+    # In OQO, .search.exact disables stemming; the quotes in the value preserve
+    # phrase adjacency. Keep both semantics for user-written quoted phrases.
+    value = f'"{raw_value}"' if quoted else raw_value
     return {
         "column_id": (
             "title_and_abstract.search.exact"
