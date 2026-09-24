@@ -7,6 +7,7 @@ import time
 import warnings
 import xml.etree.ElementTree as ET
 from datetime import date
+from email.utils import parsedate_to_datetime
 from typing import Dict, List
 
 import requests
@@ -17,10 +18,10 @@ from utils.text import clean_text
 ARXIV_OAI_URL = "https://oaipmh.arxiv.org/oai"
 
 OAI_NS = "http://www.openarchives.org/OAI/2.0/"
-ARXIV_NS = "http://arxiv.org/OAI/arXiv/"
+ARXIV_RAW_NS = "http://arxiv.org/OAI/arXivRaw/"
 NS = {
     "oai": OAI_NS,
-    "arxiv": ARXIV_NS,
+    "arxivraw": ARXIV_RAW_NS,
 }
 
 _QUERY_TOKEN_RE = re.compile(
@@ -31,11 +32,14 @@ _OPERATORS = {"AND", "OR", "ANDNOT"}
 _PRECEDENCE = {"OR": 1, "AND": 2, "ANDNOT": 2}
 
 
-def _author_name(author: ET.Element) -> str:
-    forenames = clean_text(author.findtext("arxiv:forenames", default="", namespaces=NS))
-    keyname = clean_text(author.findtext("arxiv:keyname", default="", namespaces=NS))
-    suffix = clean_text(author.findtext("arxiv:suffix", default="", namespaces=NS))
-    return " ".join(part for part in (forenames, keyname, suffix) if part)
+def _parse_version_date(value: str) -> date | None:
+    value = clean_text(value)
+    if not value:
+        return None
+    try:
+        return parsedate_to_datetime(value).date()
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _tokenize_query(query: str) -> list[str]:
@@ -252,23 +256,35 @@ def _record_to_paper(
     if header is None or header.get("status") == "deleted":
         return None
 
-    metadata = record.find("oai:metadata/arxiv:arXiv", NS)
+    metadata = record.find("oai:metadata/arxivraw:arXivRaw", NS)
     if metadata is None:
         return None
 
-    arxiv_id = clean_text(metadata.findtext("arxiv:id", default="", namespaces=NS))
-    title = clean_text(metadata.findtext("arxiv:title", default="", namespaces=NS))
-    abstract = clean_text(metadata.findtext("arxiv:abstract", default="", namespaces=NS))
-    created = clean_text(metadata.findtext("arxiv:created", default="", namespaces=NS))
-    updated = clean_text(metadata.findtext("arxiv:updated", default="", namespaces=NS))
+    arxiv_id = clean_text(metadata.findtext("arxivraw:id", default="", namespaces=NS))
+    title = clean_text(metadata.findtext("arxivraw:title", default="", namespaces=NS))
+    abstract = clean_text(metadata.findtext("arxivraw:abstract", default="", namespaces=NS))
+    authors = clean_text(metadata.findtext("arxivraw:authors", default="", namespaces=NS))
+    doi = clean_text(metadata.findtext("arxivraw:doi", default="", namespaces=NS))
 
-    if not arxiv_id or not created:
+    if not arxiv_id:
         return None
 
-    try:
-        created_date = date.fromisoformat(created)
-    except ValueError:
+    versions: list[tuple[int, date]] = []
+    for version in metadata.findall("arxivraw:version", NS):
+        version_name = version.get("version", "")
+        match = re.fullmatch(r"v(\d+)", version_name)
+        version_date = _parse_version_date(
+            version.findtext("arxivraw:date", default="", namespaces=NS)
+        )
+        if match and version_date:
+            versions.append((int(match.group(1)), version_date))
+
+    if not versions:
         return None
+
+    versions.sort(key=lambda item: item[0])
+    created_date = versions[0][1]
+    updated_date = versions[-1][1]
 
     if lower_publication_date and created_date < lower_publication_date:
         return None
@@ -278,27 +294,14 @@ def _record_to_paper(
     if not _matches_query(title, abstract, query):
         return None
 
-    if not updated:
-        updated = clean_text(
-            header.findtext("oai:datestamp", default="", namespaces=NS)
-        )
-
-    authors = [
-        _author_name(author)
-        for author in metadata.findall("arxiv:authors/arxiv:author", NS)
-    ]
-    authors = [author for author in authors if author]
-
-    doi = clean_text(metadata.findtext("arxiv:doi", default="", namespaces=NS))
-
     return {
         "paper_id": f"arxiv:{arxiv_id}",
         "source": "arxiv",
         "title": title,
-        "authors": ", ".join(authors),
+        "authors": authors,
         "year": created_date.year,
-        "published_date": created,
-        "updated_date": updated,
+        "published_date": created_date.isoformat(),
+        "updated_date": updated_date.isoformat(),
         "venue": "arXiv",
         "venue_type": "repository",
         "is_repository": True,
@@ -325,11 +328,7 @@ def search_arxiv(
     oai_until_date: str | None = None,
 ) -> List[Dict]:
     """
-    Discover arXiv records through OAI-PMH and apply the query locally.
-
-    OAI-PMH from/until filters record modification datestamps, not original
-    submission dates. from_publication_date and to_publication_date are also
-    applied locally to the original arXiv created date.
+    Discover arXiv records through OAI-PMH and apply the query locally.\n\n    OAI-PMH from/until filters record modification datestamps, not original\n    submission dates. arXivRaw version history is used to recover the v1\n    submission date and the most recent version date.
 
     This is a good fit for recurring monitoring. Historical publication-date
     backfills can be incomplete if a record was modified after the requested
@@ -385,7 +384,7 @@ def search_arxiv(
 
     initial_params = {
         "verb": "ListRecords",
-        "metadataPrefix": "arXiv",
+        "metadataPrefix": "arXivRaw",
         "from": harvest_lower.isoformat(),
     }
     if harvest_upper:
