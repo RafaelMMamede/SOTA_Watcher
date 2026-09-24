@@ -93,17 +93,18 @@ def screen_papers(papers, protocol, config, audit=None):
                 in {"resolved", "unavailable"}
             ):
                 resolution = cached_resolution
-                resolution["resolution_cache_hit"] = True
+                resolution_cache_hit = True
             else:
                 resolution = resolve_paper(
                     paper,
                     local_pdf=local,
                     resolver_config=resolver_cfg,
                 )
-                resolution["resolution_cache_hit"] = False
+                resolution_cache_hit = False
                 write_json(resolution_path, resolution)
 
             _resolution_fields(paper, resolution)
+            paper["fulltext_resolution_cache_hit"] = resolution_cache_hit
 
             download = fetch_pdf(
                 resolution,
