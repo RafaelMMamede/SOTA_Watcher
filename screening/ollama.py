@@ -133,12 +133,36 @@ def screen_extraction(extraction, criteria, cfg, folder):
             response_path.unlink(missing_ok=True)
             raise ValueError('Model output incomplete; increase output budget.')
         try:
-            parsed=json.loads(response_data['message']['content'])
-            results.append(validate_result(parsed,criteria,pages))
-        except (KeyError, TypeError, ValueError):
-            # Keep invalid output for audit, but permit a fresh attempt next time.
+            content = response_data['message']['content']
+        except (KeyError, TypeError):
             response_path.replace(target/f'part_{index}_invalid.json')
-            raise ValueError('Invalid structured output or unsupported evidence.') from None
+            raise ValueError(
+                f'Ollama part {index}: response is missing message.content.'
+            ) from None
+        if not isinstance(content, str):
+            response_path.replace(target/f'part_{index}_invalid.json')
+            raise ValueError(
+                f'Ollama part {index}: message.content is not text.'
+            )
+
+        try:
+            parsed = json.loads(content)
+        except (TypeError, ValueError):
+            response_path.replace(target/f'part_{index}_invalid.json')
+            raise ValueError(
+                f'Ollama part {index}: model did not return valid JSON.'
+            ) from None
+
+        try:
+            results.append(validate_result(parsed, criteria, pages))
+        except ValueError as exc:
+            # Keep invalid output for audit, but preserve the exact validation
+            # failure so a trial run can distinguish schema, criterion and
+            # evidence-quote errors.
+            response_path.replace(target/f'part_{index}_invalid.json')
+            raise ValueError(
+                f'Ollama part {index}: structured output validation failed: {exc}'
+            ) from None
     if not results:
         raise ValueError('No extracted text available.')
     record={**aggregate(results,criteria),'screening_model':model,'screening_model_digest':model_digest,
