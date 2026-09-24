@@ -41,8 +41,11 @@ view entitlement; the adapter never silently changes the requested view.
 
 IEEE uses `querytext`, with at most two wildcard words and at least three
 characters before each `*`. The earlier broad database queries need translation
-or splitting. Both adapters take native query strings unchanged, apart from
-explicit year filters. Year filters refer to publication years, not insertion dates.
+or splitting. Both adapters take native query strings unchanged. IEEE date bounds
+are provider-side publication years. Scopus also uses publication years as the
+provider-side prefilter, but can additionally enforce exact inclusive
+`from_publication_date` / `to_publication_date` bounds locally from
+`prism:coverDate`.
 
 ## Preserve search evidence page by page
 
