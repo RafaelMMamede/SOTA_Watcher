@@ -157,6 +157,63 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn("PUBYEAR > 2022", effective_query)
         self.assertIn("PUBYEAR < 2027", effective_query)
 
+    @patch("sources.scopus_source.time.sleep")
+    def test_scopus_cursor_continues_after_exact_date_exclusion(self, sleep):
+        session = Mock()
+        session.get.return_value.status_code = 200
+        session.get.return_value.headers = {}
+        session.get.return_value.json.side_effect = [
+            {
+                "search-results": {
+                    "opensearch:totalResults": "4",
+                    "cursor": {"@next": "cursor-2"},
+                    "entry": [
+                        scopus_entry("1", "2026-12-01"),
+                        scopus_entry("2", "2026-09-24"),
+                    ],
+                }
+            },
+            {
+                "search-results": {
+                    "opensearch:totalResults": "4",
+                    "cursor": {"@next": "cursor-end"},
+                    "entry": [
+                        scopus_entry("3", "2025-06-01"),
+                        scopus_entry("4", "2024-01-01"),
+                    ],
+                }
+            },
+        ]
+
+        pages = list(
+            iter_scopus_pages(
+                "TITLE-ABS-KEY(adversarial)",
+                api_key="secret",
+                page_size=2,
+                max_results=3,
+                from_publication_date="2023-01-01",
+                to_publication_date="2026-09-24",
+                session=session,
+            )
+        )
+
+        self.assertEqual(len(pages), 2)
+        self.assertTrue(pages[-1]["complete"])
+        self.assertEqual(pages[-1]["pagination_mode"], "cursor")
+        self.assertEqual(pages[-1]["retrieved_count"], 3)
+        self.assertEqual(pages[-1]["locally_excluded_count"], 1)
+        self.assertEqual(
+            [paper["paper_id"] for page in pages for paper in page["papers"]],
+            ["scopus:2", "scopus:3", "scopus:4"],
+        )
+
+        first_params = session.get.call_args_list[0].kwargs["params"]
+        second_params = session.get.call_args_list[1].kwargs["params"]
+        self.assertEqual(first_params["cursor"], "*")
+        self.assertEqual(second_params["cursor"], "cursor-2")
+        self.assertNotIn("start", first_params)
+        self.assertNotIn("start", second_params)
+
     @patch("sources.arxiv_source.time.sleep")
     @patch("sources.arxiv_source._request_oai")
     def test_arxiv_historical_window_includes_later_updates(
