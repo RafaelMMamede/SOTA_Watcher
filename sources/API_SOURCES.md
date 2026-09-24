@@ -73,9 +73,8 @@ later retry. There is no persistent resume or automatic deduplication here.
 Check provider quotas before large runs. Raw search responses should remain in
 your research storage rather than being published without checking provider terms.
 
-The existing `sota_watcher.py` still invokes OpenAlex only. Import these functions
-directly until source dispatch is added; listing IEEE/Scopus in config alone will
-not activate them. No PDFs are fetched or LLM calls made by these adapters.
+The main runner dispatches all enabled sources and archives page completion metadata.
+Use explicit source queries in the version-2 protocol; see the root README.
 
 ## Offline checks
 

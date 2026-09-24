@@ -75,5 +75,6 @@ if record['status'] == 'downloaded':
 `resolve_paper` also accepts the dictionaries returned by the discovery adapters.
 Unresolved papers return `status='unavailable'`, not an empty successful extraction.
 Invalid local paths, bad PDFs, HTTP errors, and parser failures raise exceptions.
-This package does not change screening decisions, run models, or modify the main
-OpenAlex-only discovery workflow.
+The main runner now calls this package through `screening.pipeline` when
+`screening.enabled` is true. This package itself only resolves, downloads and
+extracts PDFs; eligibility decisions are handled by the screening module.

@@ -16,4 +16,5 @@ def initialize_eligibility(paper):
 
 def final_decision(paper):
     manual = paper.get('manual_decision')
-    return manual if manual in DECISIONS else paper.get('eligibility_decision', 'uncertain')
+    model = paper.get('eligibility_decision')
+    return manual if manual in DECISIONS else model if model in DECISIONS else 'uncertain'
