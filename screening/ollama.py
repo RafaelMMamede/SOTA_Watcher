@@ -66,41 +66,73 @@ def parse_structured_content(content):
 
 def validate_result(result, criteria, pages):
     expected = {c['id'] for c in criteria}
-    rows = result.get('criteria') if isinstance(result,dict) else None
-    if not isinstance(rows,list) or len(rows) != len(expected):
+    rows = result.get('criteria') if isinstance(result, dict) else None
+    if not isinstance(rows, list) or len(rows) != len(expected):
         raise ValueError('Model must assess every criterion exactly once.')
-    seen=set()
-    texts={p['page']:p['text'] for p in pages}
-    norm=lambda x: re.sub(r'\s+', ' ', x).strip()
+
+    seen = set()
+    texts = {p['page']: p['text'] for p in pages}
+    norm = lambda x: re.sub(r'\\s+', ' ', x).strip()
 
     def canonical_quote(quote, page_text):
         """Validate a quote, tolerating only editorial boundary ellipses."""
-        value=norm(quote)
-        source=norm(page_text)
+        value = norm(quote)
+        source = norm(page_text)
         if value and value in source:
             return value
 
         # Models sometimes mark a verbatim excerpt as truncated by adding
         # leading/trailing "..." or Unicode ellipsis. Treat only those boundary
         # markers as presentation, never internal omissions or paraphrases.
-        trimmed=re.sub(r'^(?:\.\.\.|…)\s*', '', value)
-        trimmed=re.sub(r'\s*(?:\.\.\.|…)        if not isinstance(row,dict) or row.get('id') not in expected or row['id'] in seen:
+        trimmed = re.sub(r'^(?:\\.\\.\\.|…)\\s*', '', value)
+        trimmed = re.sub(r'\\s*(?:\\.\\.\\.|…)$', '', trimmed).strip()
+        if trimmed and trimmed != value and trimmed in source:
+            return trimmed
+        return None
+
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or row.get('id') not in expected
+            or row['id'] in seen
+        ):
             raise ValueError('Unknown/duplicate criterion.')
         seen.add(row['id'])
-        if row.get('assessment') not in {'met','not_met','uncertain'} or not isinstance(row.get('reason'),str):
+
+        if (
+            row.get('assessment') not in {'met', 'not_met', 'uncertain'}
+            or not isinstance(row.get('reason'), str)
+        ):
             raise ValueError('Invalid criterion assessment.')
-        evidence=row.get('evidence')
-        if not isinstance(evidence,list) or (row['assessment'] != 'uncertain' and not evidence):
+
+        evidence = row.get('evidence')
+        if (
+            not isinstance(evidence, list)
+            or (row['assessment'] != 'uncertain' and not evidence)
+        ):
             raise ValueError('Definite assessments require page evidence.')
+
         for item in evidence:
-            if (not isinstance(item,dict) or type(item.get('page')) is not int
-                    or item['page'] not in texts or not isinstance(item.get('quote'),str)):
-                raise ValueError('Evidence quote/page does not match supplied PDF text.')
-            quote=canonical_quote(item['quote'],texts[item['page']])
+            if (
+                not isinstance(item, dict)
+                or type(item.get('page')) is not int
+                or item['page'] not in texts
+                or not isinstance(item.get('quote'), str)
+            ):
+                raise ValueError(
+                    'Evidence quote/page does not match supplied PDF text.'
+                )
+
+            quote = canonical_quote(item['quote'], texts[item['page']])
             if not quote:
-                raise ValueError('Evidence quote/page does not match supplied PDF text.')
-            # Persist the canonical excerpt without model-added boundary ellipses.
-            item['quote']=quote
+                raise ValueError(
+                    'Evidence quote/page does not match supplied PDF text.'
+                )
+
+            # Persist the canonical excerpt without model-added boundary
+            # ellipses.
+            item['quote'] = quote
+
     return rows
 
 
