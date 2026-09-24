@@ -97,7 +97,7 @@ local harvesting ends. Capped OAI results are in harvest order, not globally ran
 
 Set `screening.enabled: true`, review the eligibility criteria, then ensure your
 configured Ollama model is installed and the server is running. The initial
-model setting is `qwen3.5:9b`, low thinking, 32K context. The request supplies
+model setting is `qwen3.5:9b`, low thinking, 32K context, and an 8K generation budget. The request supplies
 the JSON schema both through Ollama's `format` field and in the prompt. A single
 surrounding Markdown JSON fence is tolerated before the same strict schema and
 page-evidence validation is applied.
@@ -128,6 +128,11 @@ equations, figures and reading order may remain imperfect.
 Qwen 3.5 users should avoid `think: false` when relying on Ollama structured
 outputs; some Ollama/Qwen 3.5 combinations have returned unconstrained prose in
 that mode. The example configuration therefore uses `think: low`.
+
+With thinking enabled, `num_predict` is the maximum generated-token budget for the
+request, so reasoning can consume part of it. The example uses `num_predict: 8192`;
+a `done_reason="length"` response is retained as an incomplete artifact and fails
+screening rather than accepting truncated JSON.
 
 Every extracted page is sent in bounded parts to `/api/chat`. No pages are silently
 truncated. A conservative UTF-8 byte budget leaves space for instructions/schema
