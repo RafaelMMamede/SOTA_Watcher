@@ -1,38 +1,34 @@
-topics:
-  topic_1:
-    label: "Example research topic 1"
+schema_version: 2
+review:
+  title: Deepfake detection and adversarial robustness
+  objective: Identify research on visual forgery detection or adversarial attacks, defenses and evaluation in computer vision.
+# Separate retrieval families; do not require all families to match a paper.
+# Query expressions are source-specific and must be piloted against seed papers.
+searches:
+  - id: visual_forgery_detection
+    label: Deepfake and AI-generated image detection
     queries:
-      - example query for topic 1
-      - another example query for topic 1
-    # Overrides replace this topic's shared queries for that source.
-    # Scopus requires explicit native queries; [] skips a topic for a source.
-    source_queries:
-      scopus:
-        - 'TITLE-ABS-KEY("example research topic 1")'
-    topic_terms:
-      example keyword: 5
-      another keyword: 4
-      related concept: 3
-
-  topic_2:
-    label: "Example research topic 2"
+      openalex: ['deepfake detection', 'AI generated image detection', 'face forgery detection']
+      ieee: ['(deepfake OR "face forgery" OR "synthetic image") AND detection']
+      scopus: ['TITLE-ABS-KEY((deepfake OR "face forgery" OR "AI generated image" OR "synthetic image") AND detect*)']
+      arxiv: ['(deepfake OR "face forgery" OR "AI generated image" OR "synthetic image") AND detection']
+  - id: adversarial_vision
+    label: Adversarial attacks and robustness in computer vision
     queries:
-      - example query for topic 2
-      - another example query for topic 2
-    source_queries:
-      scopus:
-        - 'TITLE-ABS-KEY("example research topic 2")'
-    topic_terms:
-      method keyword: 5
-      evaluation keyword: 4
-      benchmark keyword: 3
-
-generic_priority_terms:
-  generalization: 3
-  benchmark: 3
-  dataset: 2
-  evaluation: 2
-  comparison: 2
-  survey: 2
-  state-of-the-art: 2
-  reproducibility: 2
+      openalex: ['adversarial attacks computer vision', 'adversarial robustness computer vision', 'adversarial transferability']
+      ieee: ['adversarial AND (attack OR robustness OR defense OR transferability) AND (image OR vision)']
+      scopus: ['TITLE-ABS-KEY(adversarial AND (attack* OR robustness OR defense* OR transferability) AND (image* OR vision))']
+      arxiv: ['adversarial AND (attack OR robustness OR defense OR transferability) AND (image OR vision)']
+eligibility:
+  # ALL inclusion criteria must be met; ANY met exclusion criterion excludes.
+  # These are starting criteria for your review protocol, not validated search coverage.
+  criteria:
+    - id: visual_scope
+      kind: inclusion
+      description: Addresses deepfake or AI-generated visual content detection, OR adversarial attacks, defenses, or robustness evaluation for computer vision.
+    - id: research_contribution
+      kind: inclusion
+      description: Provides a research contribution, empirical evaluation, dataset, benchmark, or relevant survey.
+    - id: non_visual_only
+      kind: exclusion
+      description: Exclusively concerns non-visual tasks without a substantive connection to computer vision.

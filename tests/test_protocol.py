@@ -1,0 +1,19 @@
+import unittest
+from utils.protocol import validate_protocol, queries_for
+from utils.eligibility import initialize_eligibility, final_decision
+from sota_watcher import filter_papers
+
+class ProtocolTests(unittest.TestCase):
+    def test_source_queries_and_no_score_exclusion(self):
+        p = {'schema_version':2, 'searches':[{'id':'s', 'queries':{'openalex':['q'], 'scopus':[]}}]}
+        validate_protocol(p)
+        self.assertEqual(queries_for(p, 'openalex'), [('s','q')])
+        self.assertEqual(queries_for(p, 'ieee'), [])
+        rows = [{'triage_score':0}]
+        self.assertEqual(filter_papers(rows, {'min_triage_score':100}), rows)
+    def test_invalid_ids(self):
+        with self.assertRaises(ValueError):
+            validate_protocol({'schema_version':2, 'searches':[{'id':'s','queries':{'typo':['q']}}]})
+    def test_manual_precedence(self):
+        row=initialize_eligibility({'manual_decision':'include', 'eligibility_decision':'exclude'})
+        self.assertEqual(final_decision(row),'include')

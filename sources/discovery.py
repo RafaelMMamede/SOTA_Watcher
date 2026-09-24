@@ -6,6 +6,7 @@ import inspect
 import warnings
 
 from utils.discovery_log import utc_now
+from utils.protocol import queries_for, validate_protocol
 
 from sources.openalex_source import search_openalex
 from sources.arxiv_source import search_arxiv
@@ -14,6 +15,9 @@ from sources.scopus_source import search_scopus, iter_scopus_pages
 
 
 def get_queries_from_search_terms(search_terms: dict, source: str = "openalex") -> list[tuple[str, str]]:
+    structured = queries_for(search_terms, source)
+    if structured is not None:
+        return structured
     items = []
     for topic, settings in search_terms.get("topics", {}).items():
         overrides = settings.get("source_queries", {})
@@ -30,6 +34,7 @@ def get_queries_from_search_terms(search_terms: dict, source: str = "openalex") 
 
 
 def fetch_papers(config: dict, search_terms: dict, *, audit=None) -> list[dict]:
+    validate_protocol(search_terms)
     adapters = {"openalex": search_openalex, "arxiv": search_arxiv,
                 "ieee": search_ieee, "scopus": search_scopus}
     signatures = {"openalex": search_openalex, "arxiv": search_arxiv,
