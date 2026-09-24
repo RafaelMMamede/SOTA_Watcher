@@ -158,6 +158,57 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn("PUBYEAR < 2027", effective_query)
 
     @patch("sources.scopus_source.time.sleep")
+    def test_scopus_auto_falls_back_with_conservative_count(self, sleep):
+        session = Mock()
+        session.get.side_effect = [
+            Mock(status_code=400, headers={}, json=lambda: {"message": "cursor unavailable"}),
+            Mock(
+                status_code=200,
+                headers={},
+                json=lambda: {
+                    "search-results": {
+                        "opensearch:totalResults": "3",
+                        "entry": [
+                            scopus_entry("1", "2026-09-24"),
+                            scopus_entry("2", "2025-01-01"),
+                            scopus_entry("3", "2024-01-01"),
+                        ],
+                    }
+                },
+            ),
+        ]
+
+        with self.assertWarns(RuntimeWarning):
+            pages = list(
+                iter_scopus_pages(
+                    "TITLE-ABS-KEY(adversarial)",
+                    api_key="secret",
+                    page_size=200,
+                    max_results=3,
+                    from_publication_date="2023-01-01",
+                    to_publication_date="2026-09-24",
+                    session=session,
+                )
+            )
+
+        self.assertEqual(len(pages), 1)
+        self.assertTrue(pages[0]["complete"])
+        self.assertEqual(pages[0]["pagination_mode"], "offset")
+        self.assertTrue(pages[0]["cursor_fallback_used"])
+
+        cursor_params = session.get.call_args_list[0].kwargs["params"]
+        offset_params = session.get.call_args_list[1].kwargs["params"]
+
+        self.assertEqual(cursor_params["cursor"], "*")
+        self.assertEqual(cursor_params["count"], 3)
+        self.assertEqual(offset_params["start"], 0)
+        self.assertEqual(offset_params["count"], 3)
+        self.assertEqual(
+            offset_params["sort"],
+            "-coverDate,+artnum,+creator",
+        )
+
+    @patch("sources.scopus_source.time.sleep")
     def test_scopus_cursor_continues_after_exact_date_exclusion(self, sleep):
         session = Mock()
         session.get.return_value.status_code = 200
