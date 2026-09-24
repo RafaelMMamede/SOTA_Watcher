@@ -49,6 +49,38 @@ class ScreeningTests(unittest.TestCase):
             self.assertTrue(second['screening_cache_hit'])
             self.assertEqual(post.call_count,2)
     @patch('screening.ollama.requests.post')
+    @patch('screening.ollama.requests.get')
+    def test_incomplete_generation_reports_budget(self,get,post):
+        get.return_value.json.return_value={
+            'models':[{'name':'qwen3.5:9b','digest':'abc'}]
+        }
+        post.return_value=Mock(
+            json=lambda:{
+                'done':True,
+                'done_reason':'length',
+                'eval_count':2048,
+                'message':{'content':'{'},
+            }
+        )
+        extraction={
+            'status':'extracted',
+            'empty_pages':[],
+            'pages':[PAGES[0]],
+            'pdf_sha256':'hash',
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(
+                ValueError,
+                "done_reason='length'.*num_predict=2048",
+            ):
+                screen_extraction(
+                    extraction,
+                    CRITERIA,
+                    {'num_predict':2048},
+                    folder,
+                )
+
+    @patch('screening.ollama.requests.post')
     def test_empty_extraction_never_calls_model(self,post):
         with self.assertRaises(ValueError):
             screen_extraction({'status':'needs_review','empty_pages':[1]},CRITERIA,{},'unused')
