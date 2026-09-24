@@ -138,12 +138,15 @@ still includes the schema and supplied pages, and its output must pass the same
 local exact-quote/schema validator. Primary and repair artifacts are retained
 separately; no invalid or truncated response is accepted as a screening result.
 
-Every extracted page is sent in bounded parts to `/api/chat`. No pages are silently
-truncated. A conservative UTF-8 byte budget leaves space for instructions/schema
-and output; this is not a model-specific tokenizer. Larger papers can require many
-calls. Each part uses the same criterion schema. Definite assessments require an
-exact quote from a supplied PDF page. Invalid JSON, invented quotes/pages, missing
-criteria, truncated output, transport failure and empty extraction stay uncertain.
+Extracted pages are greedily packed in order into bounded multi-page parts for
+`/api/chat`. Whole pages are kept together whenever they fit; only a single page
+that exceeds the entire part budget is split, with its page number preserved on
+every fragment. No text is silently dropped or reordered. A conservative UTF-8
+byte budget reserves space for instructions/schema and output; this is not a
+model-specific tokenizer. Each part uses the same criterion schema. Definite
+assessments require grounded evidence from a supplied PDF page. Invalid JSON,
+invented quotes/pages, missing criteria, truncated output, transport failure and
+empty extraction stay uncertain.
 Conflicting evidence across parts becomes uncertain for that criterion. Absence
 of evidence in a part must not be interpreted as a failed criterion.
 
