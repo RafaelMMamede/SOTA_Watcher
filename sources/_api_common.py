@@ -65,6 +65,31 @@ def get_json(session, url, *, params, headers, timeout, max_retries, source):
                     f"{source}: HTTP {status}; check API key, institutional access and requested view."
                 )
             if status not in (429, 500, 502, 503, 504) or attempt == max_retries:
+                detail = ""
+                try:
+                    payload = response.json()
+                except (ValueError, TypeError):
+                    payload = None
+                if isinstance(payload, dict):
+                    validation = payload.get("validation")
+                    if isinstance(validation, dict):
+                        messages = [
+                            str(item.get("message") or "").strip()
+                            for item in validation.get("errors") or []
+                            if isinstance(item, dict)
+                        ]
+                        detail = "; ".join(m for m in messages if m)
+                    if not detail:
+                        detail = str(
+                            payload.get("message")
+                            or payload.get("error")
+                            or ""
+                        ).strip()
+                if detail:
+                    detail = detail.replace("\n", " ")[:800]
+                    raise RuntimeError(
+                        f"{source}: HTTP {status}: {detail}; search incomplete."
+                    )
                 raise RuntimeError(f"{source}: HTTP {status}; search incomplete.")
         delay = min(2 ** attempt, 60)
         if retry_after:
