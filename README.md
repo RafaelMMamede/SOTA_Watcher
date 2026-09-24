@@ -55,12 +55,13 @@ update-window test, not a historical search. Then remove caps for production.
 
 `max_results_per_query: null` follows pagination to exhaustion. Per-source
 `max_results` overrides the global cap. OpenAlex uses cursor pagination with
-pages up to 100. Scopus prefers subscriber cursor pagination, which supports
-forward deep pagination beyond the 5,000-record offset limit. If cursor access is
-rejected, `pagination_mode: auto` falls back to offset paging and explicitly
-retains the 5,000-source-record limit. Result totals changing mid-pagination or
-repeated records/cursors cause failures rather than silent partial success.
-IEEE retains its documented paging limits. Source access/rate limits still apply.
+pages up to 100. Scopus prefers cursor pagination. If cursor access is rejected,
+`pagination_mode: auto` falls back to offset paging using the configurable
+`offset_page_size` (default 25) rather than assuming the account accepts the
+documented STANDARD maximum of 200. Offset fallback explicitly retains the
+5,000-source-record limit. Result totals changing mid-pagination or repeated
+records/cursors cause failures rather than silent partial success. IEEE retains
+its documented paging limits. Source access/rate limits still apply.
 
 OpenAlex searches title and abstract only and applies exact publication-date
 bounds. IEEE uses inclusive publication years and warns about the coarser precision.
