@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
-from screening.ollama import validate_result, aggregate, parse_structured_content, screen_extraction
+from screening.ollama import _pack_pages, validate_result, aggregate, parse_structured_content, screen_extraction
 from screening.pipeline import screen_papers
 from utils.deduplication import merge_with_existing
 import pandas as pd
@@ -93,20 +93,43 @@ class ScreeningTests(unittest.TestCase):
     def test_conflicting_parts_are_uncertain(self):
         rows=[result()['criteria'],result(assessment='not_met')['criteria']]
         self.assertEqual(aggregate(rows,CRITERIA)['eligibility_decision'],'uncertain')
+    def test_page_packer_combines_pages_and_splits_only_oversized_page(self):
+        packed=_pack_pages(PAGES,1000)
+        self.assertEqual(len(packed),1)
+        self.assertEqual([p['page'] for p in packed[0]],[1,2])
+
+        long_text='abcdefghij' * 100
+        split=_pack_pages([{'page':7,'text':long_text}],180)
+        self.assertGreater(len(split),1)
+        self.assertEqual(
+            ''.join(part[0]['text'] for part in split),
+            long_text,
+        )
+        self.assertTrue(all(part[0]['page']==7 for part in split))
+
     @patch('screening.ollama.requests.post')
     @patch('screening.ollama.requests.get')
     def test_full_page_coverage_and_cache(self,get,post):
         get.return_value.json.return_value={'models':[{'name':'qwen3.5:9b','digest':'abc'}]}
-        post.side_effect=[Mock(json=lambda r=r:{'done':True,'done_reason':'stop','message':{'content':json.dumps(r)}})
-                          for r in (result(), result(2,'The evaluation uses images.'))]
+        post.return_value=Mock(
+            json=lambda:{
+                'done':True,
+                'done_reason':'stop',
+                'message':{'content':json.dumps(result())},
+            }
+        )
         extraction={'status':'extracted','empty_pages':[], 'pages':PAGES,'pdf_sha256':'hash'}
         with tempfile.TemporaryDirectory() as folder:
             first=screen_extraction(extraction,CRITERIA,{},folder)
             second=screen_extraction(extraction,CRITERIA,{},folder)
             self.assertEqual(first['screened_pages'],2)
+            self.assertEqual(first['screening_parts'],1)
             self.assertEqual(first['eligibility_decision'],'include')
             self.assertTrue(second['screening_cache_hit'])
-            self.assertEqual(post.call_count,2)
+            self.assertEqual(post.call_count,1)
+            sent_pages=post.call_args.kwargs['json']['messages'][1]['content']
+            sent_pages=json.loads(sent_pages)['pdf_pages']
+            self.assertEqual(sent_pages,PAGES)
     @patch('screening.ollama.requests.post')
     @patch('screening.ollama.requests.get')
     def test_incomplete_generation_reports_budget(self,get,post):
