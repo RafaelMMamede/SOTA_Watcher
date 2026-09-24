@@ -535,9 +535,12 @@ def resolve_paper(
     if timeout <= 0 or retries < 0 or retries > 10:
         raise ValueError("Invalid fulltext_resolution timeout/retry settings.")
 
+    # An explicit environment contact is the safest runtime override: it keeps
+    # personal email out of tracked YAML and prevents example placeholders in
+    # config.yaml from shadowing the real Unpaywall contact.
     email = (
-        str(cfg.get("email") or "").strip()
-        or os.getenv("UNPAYWALL_EMAIL", "").strip()
+        os.getenv("UNPAYWALL_EMAIL", "").strip()
+        or str(cfg.get("email") or "").strip()
     )
     client = session or requests.Session()
     attempts = []
