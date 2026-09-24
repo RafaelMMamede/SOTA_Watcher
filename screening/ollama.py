@@ -72,7 +72,7 @@ def validate_result(result, criteria, pages):
 
     seen = set()
     texts = {p['page']: p['text'] for p in pages}
-    norm = lambda x: re.sub(r'\\s+', ' ', x).strip()
+    norm = lambda x: re.sub(r'\s+', ' ', x).strip()
 
     def canonical_quote(quote, page_text):
         """Validate a quote, tolerating only editorial boundary ellipses."""
@@ -84,8 +84,8 @@ def validate_result(result, criteria, pages):
         # Models sometimes mark a verbatim excerpt as truncated by adding
         # leading/trailing "..." or Unicode ellipsis. Treat only those boundary
         # markers as presentation, never internal omissions or paraphrases.
-        trimmed = re.sub(r'^(?:\\.\\.\\.|…)\\s*', '', value)
-        trimmed = re.sub(r'\\s*(?:\\.\\.\\.|…)$', '', trimmed).strip()
+        trimmed = re.sub(r'^(?:\.\.\.|…)\s*', '', value)
+        trimmed = re.sub(r'\s*(?:\.\.\.|…)$', '', trimmed).strip()
         if trimmed and trimmed != value and trimmed in source:
             return trimmed
         return None
