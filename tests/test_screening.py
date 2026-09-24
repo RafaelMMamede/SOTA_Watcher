@@ -36,6 +36,50 @@ class ScreeningTests(unittest.TestCase):
                 [PAGES[0]],
             )
 
+    def test_unique_internal_ellipsis_resolves_to_exact_source_span(self):
+        pages=[{
+            'page':1,
+            'text':(
+                'It outlines key deepfake generation models, such as GANs, '
+                'autoencoders, neural rendering, and diffusion systems, while '
+                'also explaining how adversarial methods enhance realism and '
+                'challenge existing detectors.'
+            ),
+        }]
+        value=result(
+            quote=(
+                'It outlines key deepfake generation models... while also '
+                'explaining how adversarial methods enhance realism and '
+                'challenge existing detectors.'
+            )
+        )
+        rows=validate_result(value,CRITERIA,pages)
+        self.assertEqual(rows[0]['evidence'][0]['quote'],pages[0]['text'])
+
+    def test_internal_ellipsis_must_be_unique_and_bounded(self):
+        ambiguous=[{
+            'page':1,
+            'text':(
+                'Alpha evidence phrase middle one omega evidence phrase. '
+                'Alpha evidence phrase middle two omega evidence phrase.'
+            ),
+        }]
+        with self.assertRaisesRegex(ValueError, 'Evidence quote/page'):
+            validate_result(
+                result(
+                    quote='Alpha evidence phrase... omega evidence phrase.'
+                ),
+                CRITERIA,
+                ambiguous,
+            )
+
+        with self.assertRaisesRegex(ValueError, 'Evidence quote/page'):
+            validate_result(
+                result(quote='We study ... visual ... research.'),
+                CRITERIA,
+                [PAGES[0]],
+            )
+
     def test_structured_parser_accepts_only_plain_or_fenced_json(self):
         payload = result()
         plain = json.dumps(payload)
