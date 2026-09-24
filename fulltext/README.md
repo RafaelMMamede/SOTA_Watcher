@@ -68,6 +68,26 @@ Fetch a versioned arXiv paper and extract its text:
 python -m fulltext --arxiv 2609.10002v1 --output output/papers/2609.10002v1
 ```
 
+Resolve a DOI through the open-full-text chain without downloading it:
+
+```bash
+python -m fulltext \
+  --doi 10.1234/example \
+  --output output/resolver_test \
+  --resolve-only
+```
+
+Resolve, download, and extract when an open copy exists:
+
+```bash
+python -m fulltext \
+  --doi 10.1234/example \
+  --output output/papers/example
+```
+
+You can also use `--openalex W...` or an exact `--title` with optional
+`--year` and `--authors` for the conservative metadata fallback.
+
 Or import a PDF you already have:
 
 ```bash
