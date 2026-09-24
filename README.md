@@ -61,9 +61,11 @@ queries or split publication years and archive all runs when that happens.
 Result totals changing mid-pagination or repeated records/cursors cause failures,
 not silent partial success. Source access/rate limits still apply.
 
-OpenAlex uses exact publication-date bounds. IEEE/Scopus use inclusive publication
-years and warn about the coarser precision. Adapter request parameters are saved;
-OpenAlex defaults an omitted upper bound to the day the run starts.
+OpenAlex searches title and abstract only and applies exact publication-date
+bounds. IEEE uses inclusive publication years and warns about the coarser precision.
+Scopus uses provider-side year bounds as a prefilter, then enforces the exact
+configured YYYY-MM-DD range locally on `prism:coverDate`. Adapter request
+parameters are saved; OpenAlex defaults an omitted upper bound to the day the run starts.
 
 ### arXiv date semantics
 
