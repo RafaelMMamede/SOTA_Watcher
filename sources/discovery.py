@@ -55,72 +55,202 @@ def fetch_papers(config: dict, search_terms: dict, *, audit=None) -> list[dict]:
         allowed = set(inspect.signature(signatures[source]).parameters) - {"query", "session", "api_key", "insttoken"}
         if set(options) - allowed:
             raise ValueError(f"Unsupported options for {source}: {sorted(set(options) - allowed)}. Set credentials in environment variables.")
+
         kwargs = {"max_results": config.get("max_results_per_query")}
+
         if source == "openalex":
-            kwargs.update({k: config[k] for k in ("mailto", "from_publication_date", "to_publication_date", "sleep_seconds") if k in config})
+            kwargs.update({
+                k: config[k]
+                for k in (
+                    "mailto",
+                    "from_publication_date",
+                    "to_publication_date",
+                    "sleep_seconds",
+                )
+                if k in config
+            })
+
         elif source == "arxiv":
-            kwargs.update({k: config[k] for k in ("from_publication_date", "to_publication_date") if config.get(k)})
+            kwargs.update({
+                k: config[k]
+                for k in ("from_publication_date", "to_publication_date")
+                if config.get(k)
+            })
             # Never inherit the one-second OpenAlex delay for arXiv.
             kwargs["sleep_seconds"] = max(3.0, config.get("sleep_seconds", 3.0))
+
+        elif source == "scopus":
+            kwargs["sleep_seconds"] = config.get("sleep_seconds", 1.0)
+            for global_key, year_key in (
+                ("from_publication_date", "start_year"),
+                ("to_publication_date", "end_year"),
+            ):
+                if config.get(global_key):
+                    # Scopus filters the provider request by year, then the
+                    # adapter enforces this exact YYYY-MM-DD bound locally.
+                    kwargs[global_key] = config[global_key]
+                    if year_key not in options:
+                        kwargs[year_key] = date.fromisoformat(
+                            str(config[global_key])
+                        ).year
+
         else:
             kwargs["sleep_seconds"] = config.get("sleep_seconds", 1.0)
-            for global_key, year_key in (("from_publication_date", "start_year"), ("to_publication_date", "end_year")):
+            for global_key, year_key in (
+                ("from_publication_date", "start_year"),
+                ("to_publication_date", "end_year"),
+            ):
                 if config.get(global_key) and year_key not in options:
                     value = date.fromisoformat(str(config[global_key]))
                     kwargs[year_key] = value.year
-                    warnings.warn(f"{source}: {global_key} uses the whole inclusive year {value.year}; day/month precision is unavailable.", stacklevel=2)
+                    warnings.warn(
+                        f"{source}: {global_key} uses the whole inclusive year "
+                        f"{value.year}; day/month precision is unavailable.",
+                        stacklevel=2,
+                    )
+
         kwargs.update(options)
+
         cap = kwargs["max_results"]
         if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or cap < 1):
             raise ValueError(f"{source}: max_results must be a positive integer.")
+
         plan.append((source, kwargs, get_queries_from_search_terms(search_terms, source)))
 
     if audit:
-        audit.snapshot('search_plan', [{'source': source, 'options': kwargs,
-                        'queries': [{'topic': topic, 'query': query} for topic, query in queries]}
-                       for source, kwargs, queries in plan])
+        audit.snapshot(
+            "search_plan",
+            [
+                {
+                    "source": source,
+                    "options": kwargs,
+                    "queries": [
+                        {"topic": topic, "query": query}
+                        for topic, query in queries
+                    ],
+                }
+                for source, kwargs, queries in plan
+            ],
+        )
+
     papers, outcomes = [], []
     query_number = 0
+
     for source, kwargs, queries in plan:
         if not queries:
-            outcomes.append({'source':source, 'status':'skipped', 'complete':False,
-                             'reason':'No queries configured for enabled source.'})
+            outcomes.append({
+                "source": source,
+                "status": "skipped",
+                "complete": False,
+                "reason": "No queries configured for enabled source.",
+            })
+
         for topic, query in queries:
             query_number += 1
-            context = {'query_id':str(query_number), 'source':source, 'search_topic':topic, 'query':query}
+            context = {
+                "query_id": str(query_number),
+                "source": source,
+                "search_topic": topic,
+                "query": query,
+            }
             print(f"\nSearching {source} [{topic}]: {query}")
+
             if audit:
-                audit.event('query_started', **context, options=kwargs)
+                audit.event("query_started", **context, options=kwargs)
+
             results, last = [], None
+
             try:
-                for page_number, page in enumerate(signatures[source](query=query, **kwargs), 1):
-                    rows = [{**paper, 'search_topic':topic, 'retrieved_at':utc_now(),
-                             **({'run_id':audit.run_id, 'query_id':str(query_number)} if audit else {})}
-                            for paper in page['papers']]
-                    details = {k:v for k,v in page.items() if k not in {'papers', 'raw_response', 'source', 'query'}}
+                for page_number, page in enumerate(
+                    signatures[source](query=query, **kwargs),
+                    1,
+                ):
+                    rows = [
+                        {
+                            **paper,
+                            "search_topic": topic,
+                            "retrieved_at": utc_now(),
+                            **(
+                                {
+                                    "run_id": audit.run_id,
+                                    "query_id": str(query_number),
+                                }
+                                if audit
+                                else {}
+                            ),
+                        }
+                        for paper in page["papers"]
+                    ]
+                    details = {
+                        k: v
+                        for k, v in page.items()
+                        if k not in {
+                            "papers",
+                            "raw_response",
+                            "source",
+                            "query",
+                        }
+                    }
+
                     if audit:
-                        audit.event('query_page', **context, page_number=page_number, **details, records=rows)
-                        if config.get('save_raw_responses', True) and 'raw_response' in page:
-                            audit.snapshot(f'raw_{query_number}_{page_number}', page['raw_response'])
+                        audit.event(
+                            "query_page",
+                            **context,
+                            page_number=page_number,
+                            **details,
+                            records=rows,
+                        )
+                        if (
+                            config.get("save_raw_responses", True)
+                            and "raw_response" in page
+                        ):
+                            audit.snapshot(
+                                f"raw_{query_number}_{page_number}",
+                                page["raw_response"],
+                            )
+
                     results.extend(rows)
                     last = details
+
                 if last is None:
-                    raise RuntimeError(f'{source}: no completion record returned.')
+                    raise RuntimeError(
+                        f"{source}: no completion record returned."
+                    )
+
             except BaseException as exc:
-                outcomes.append({**context, 'status':'failed', 'complete':False,
-                                 'retrieved_count':len(results), 'error_type':type(exc).__name__})
+                outcomes.append({
+                    **context,
+                    "status": "failed",
+                    "complete": False,
+                    "retrieved_count": len(results),
+                    "error_type": type(exc).__name__,
+                })
                 if audit:
-                    audit.event('query_failed', **outcomes[-1])
-                    audit.snapshot('retrieval_summary', outcomes)
+                    audit.event("query_failed", **outcomes[-1])
+                    audit.snapshot("retrieval_summary", outcomes)
                 raise
-            outcome = {**context, **last, 'retrieved_count':len(results),
-                       'status':'complete' if last['complete'] else 'incomplete'}
+
+            outcome = {
+                **context,
+                **last,
+                "retrieved_count": len(results),
+                "status": "complete" if last["complete"] else "incomplete",
+            }
             outcomes.append(outcome)
-            if not last['complete']:
-                warnings.warn(f"{source}: incomplete search ({last['stop_reason']}); {len(results)} records retrieved.", stacklevel=2)
+
+            if not last["complete"]:
+                warnings.warn(
+                    f"{source}: incomplete search ({last['stop_reason']}); "
+                    f"{len(results)} records retrieved.",
+                    stacklevel=2,
+                )
+
             if audit:
-                audit.event('query_succeeded', **outcome)
+                audit.event("query_succeeded", **outcome)
+
             papers.extend(results)
+
     if audit:
-        audit.snapshot('retrieval_summary', outcomes)
+        audit.snapshot("retrieval_summary", outcomes)
+
     return papers
