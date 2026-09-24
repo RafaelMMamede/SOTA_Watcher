@@ -41,6 +41,8 @@ class DiscoveryTests(unittest.TestCase):
             self.assertEqual(len(rows), 4)
             self.assertEqual(mocks['scopus'].call_args.kwargs['query'], 'TITLE-ABS-KEY(deepfake)')
             self.assertEqual(mocks['scopus'].call_args.kwargs['max_results'], 2)
+            self.assertEqual(mocks['scopus'].call_args.kwargs['from_publication_date'], '2025-06-01')
+            self.assertEqual(mocks['scopus'].call_args.kwargs['start_year'], 2025)
             self.assertEqual(mocks['ieee'].call_args.kwargs['start_year'], 2025)
             self.assertEqual(mocks['arxiv'].call_args.kwargs['sleep_seconds'], 3)
             self.assertTrue(mocks['arxiv'].call_args.kwargs['native_query'])
