@@ -21,6 +21,21 @@ class ScreeningTests(unittest.TestCase):
         for value in (result(9),result(1,'Invented quote'),{'criteria':[]}):
             with self.assertRaises(ValueError):
                 validate_result(value,CRITERIA,PAGES)
+    def test_boundary_ellipses_are_canonicalized_but_internal_omissions_fail(self):
+        value=result(quote='...We study visual research....')
+        rows=validate_result(value,CRITERIA,[PAGES[0]])
+        self.assertEqual(
+            rows[0]['evidence'][0]['quote'],
+            'We study visual research.',
+        )
+
+        with self.assertRaisesRegex(ValueError, 'Evidence quote/page'):
+            validate_result(
+                result(quote='We study ... research.'),
+                CRITERIA,
+                [PAGES[0]],
+            )
+
     def test_structured_parser_accepts_only_plain_or_fenced_json(self):
         payload = result()
         plain = json.dumps(payload)
