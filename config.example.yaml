@@ -48,7 +48,8 @@ screening:
   enabled: false
   model: qwen3.5:9b
   base_url: http://localhost:11434
-  think: false
+  # Qwen 3.5 structured output is more reliable in Ollama with low thinking.
+  think: low
   num_ctx: 32768
   num_predict: 2048
   timeout_seconds: 300
