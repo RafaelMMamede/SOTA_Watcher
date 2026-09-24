@@ -159,6 +159,7 @@ def iter_scopus_pages(
     from_publication_date: str | None = None,
     to_publication_date: str | None = None,
     pagination_mode: str = "auto",
+    offset_page_size: int = 25,
     sleep_seconds: float = 1.0,
     timeout: float = 30,
     max_retries: int = 3,
@@ -172,9 +173,10 @@ def iter_scopus_pages(
 
     Cursor pagination is preferred for stable forward deep pagination.
     pagination_mode='auto' tries cursor mode first and falls back to offset mode
-    only if the first cursor request is rejected. Offset fallback retains the
-    5,000-source-record limit and fails if repeated records make completeness
-    uncertain.
+    only if the first cursor request is rejected. Offset fallback uses the
+    conservative offset_page_size rather than assuming the account accepts the
+    documented STANDARD maximum. It retains the 5,000-source-record limit and
+    fails if repeated records make completeness uncertain.
     """
     view = view.upper()
     if view not in {"STANDARD", "COMPLETE"}:
@@ -194,6 +196,13 @@ def iter_scopus_pages(
         timeout,
         max_retries,
     )
+    if (
+        isinstance(offset_page_size, bool)
+        or not isinstance(offset_page_size, int)
+        or offset_page_size < 1
+        or offset_page_size > (25 if view == "COMPLETE" else 200)
+    ):
+        raise ValueError("Invalid offset_page_size.")
 
     lower = _parse_bound(from_publication_date, "from_publication_date")
     upper = _parse_bound(to_publication_date, "to_publication_date")
@@ -227,7 +236,9 @@ def iter_scopus_pages(
     base_params = {
         "query": effective_query,
         "view": view,
-        "sort": "-coverDate",
+        # Scopus supports up to three sort keys. Secondary keys reduce
+        # ambiguous page boundaries when many records share a cover date.
+        "sort": "-coverDate,+artnum,+creator",
     }
     client = session if session is not None else requests.Session()
 
@@ -274,8 +285,9 @@ def iter_scopus_pages(
                     )
                 params["start"] = source_retrieved
                 params["count"] = min(
-                    page_size,
+                    offset_page_size,
                     5000 - source_retrieved,
+                    remaining if remaining is not None else offset_page_size,
                 )
                 if total is not None:
                     params["count"] = min(
