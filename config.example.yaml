@@ -14,8 +14,10 @@ source_options:
   scopus:
     view: STANDARD
     page_size: 200
-    # Prefer subscriber cursor pagination; auto falls back to offset if rejected.
+    # Prefer cursor pagination; auto falls back to offset if rejected.
     pagination_mode: auto
+    # Conservative offset request size for accounts with lower service limits.
+    offset_page_size: 25
   arxiv:
     sleep_seconds: 3.0
     # OAI harvests all subjects and filters titles/abstracts locally.
