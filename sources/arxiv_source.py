@@ -89,6 +89,14 @@ def _fetch_arxiv_feed(
                 time.sleep(wait_seconds)
                 continue
 
+            if 400 <= response.status_code < 500:
+                raise RuntimeError(
+                    f"arXiv: HTTP {response.status_code}; request rejected. "
+                    "Not retrying this response automatically. "
+                    "Check the exact query with a direct request; this status alone "
+                    "does not establish whether the query or the service caused the rejection."
+                )
+
             response.raise_for_status()
 
         except requests.exceptions.Timeout:
