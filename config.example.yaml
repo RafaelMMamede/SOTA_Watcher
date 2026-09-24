@@ -53,6 +53,10 @@ screening:
   num_ctx: 32768
   # Leave enough generation budget for low-thinking reasoning + JSON output.
   num_predict: 8192
+  # One compact no-thinking repair attempt is allowed if the primary
+  # response truncates or fails strict schema/evidence validation.
+  repair_invalid_output: true
+  repair_num_predict: 2048
   timeout_seconds: 300
   max_papers_per_run: null
   papers_dir: output/papers
