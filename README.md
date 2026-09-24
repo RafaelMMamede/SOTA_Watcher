@@ -98,15 +98,27 @@ configured Ollama model is installed and the server is running. The initial
 model setting is `qwen3.5:9b`, thinking disabled, 32K context.
 
 All current candidates are processed, up to `max_papers_per_run`; the remainder
-are `deferred` and retained. PDF resolution currently supports arXiv and user
-supplied local files. For DOI-only papers, put an exact `paper_id` (or DOI) to file
-path mapping in `local_pdfs`. Automated DOI-to-open-access resolution is not yet
-implemented; unavailable full text remains **uncertain**, never excluded.
+are `deferred` and retained. Full-text acquisition is independent of discovery:
+a Scopus/IEEE/OpenAlex record may be screened from a legitimate open repository
+copy. Resolution order is local mapping, arXiv, OpenAlex OA locations, Unpaywall
+DOI lookup, Semantic Scholar `openAccessPdf`, then Crossref metadata links for
+manual follow-up. A conservative exact-title/year/author-checked OpenAlex lookup
+can enrich papers that lack stable identifiers.
 
-Downloads and page extraction reuse validated caches. Versioned arXiv PDF URLs
-are preferred when metadata supplies them. See [fulltext/README.md](fulltext/README.md)
-for standalone PDF tools. Extraction disables OCR; empty/scanned pages require
-manual review. Tables, equations, figures and reading order may remain imperfect.
+Only resolver-verified open/public PDF URLs are downloaded automatically.
+Crossref/TDM links and arbitrary provider `pdf_url` fields are never assumed open.
+Unavailable full text remains **uncertain**, never excluded. Resolver attempts,
+selected source/version/license, identifier enrichment and manual candidates are
+retained in the paper artifacts and Excel table. Set `UNPAYWALL_EMAIL` when the
+main `mailto` is not your contact address; `SEMANTIC_SCHOLAR_API_KEY` is optional.
+
+Downloads, resolver outcomes and page extraction reuse validated caches. Set
+`screening.refresh_resolution: true` to re-check external OA sources and
+`screening.refresh_pdf: true` to re-fetch the selected PDF. Versioned arXiv PDF
+URLs are preferred when metadata supplies them. See
+[fulltext/README.md](fulltext/README.md) for resolver and standalone PDF details.
+Extraction disables OCR; empty/scanned pages require manual review. Tables,
+equations, figures and reading order may remain imperfect.
 
 Every extracted page is sent in bounded parts to `/api/chat`. No pages are silently
 truncated. A conservative UTF-8 byte budget leaves space for instructions/schema
