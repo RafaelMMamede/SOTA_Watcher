@@ -7,7 +7,7 @@ from urllib.parse import unquote
 import pandas as pd
 
 LIST_FIELDS = ('sources', 'queries', 'search_topics', 'provenance')
-STRUCTURED_FIELDS = (*LIST_FIELDS, 'metadata_variants')
+STRUCTURED_FIELDS = (*LIST_FIELDS, 'metadata_variants', 'eligibility_evidence', 'eligibility_criteria')
 
 
 def present(value):
@@ -103,6 +103,16 @@ def merge_group(records):
         provenance.extend(existing or [{k: paper[k] for k in ('source', 'paper_id', 'query', 'search_topic', 'retrieved_at', 'run_id', 'query_id') if present(paper.get(k))}])
     merged['provenance'] = unique(provenance)
     merged['metadata_variants'] = {k: v for k, v in variants.items() if len(v) > 1}
+    # Latest screening is an atomic assessment bundle, never mix old evidence
+    # with a new decision. Preserve human fields independently.
+    latest = next((p for p in reversed(records) if present(p.get('eligibility_status')) and p.get('eligibility_status') not in {'not_screened', 'deferred'}), None)
+    if latest is None:
+        latest = next((p for p in reversed(records) if present(p.get('eligibility_status'))), None)
+    if latest is not None:
+        for key in list(merged):
+            if key.startswith(('eligibility_', 'screening_', 'fulltext_', 'pdf_')):
+                del merged[key]
+        merged.update({k:v for k,v in latest.items() if k.startswith(('eligibility_', 'screening_', 'fulltext_', 'pdf_'))})
     merged['has_abstract'] = present(merged.get('abstract'))
     return merged
 

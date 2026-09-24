@@ -32,7 +32,7 @@ def resolve_paper(paper=None, *, local_pdf=None):
         if not path.is_file():
             raise FileNotFoundError(path)
         return {'status': 'resolved', 'kind': 'local', 'path': str(path)}
-    for field in ('arxiv_id', 'paper_id', 'url', 'pdf_url'):
+    for field in ('pdf_url', 'arxiv_id', 'paper_id', 'url'):
         identifier = arxiv_id(paper.get(field))
         if identifier:
             return {'status': 'resolved', 'kind': 'arxiv', 'arxiv_id': identifier,

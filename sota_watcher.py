@@ -7,6 +7,7 @@ from utils.deduplication import deduplicate_papers, merge_with_existing
 from utils.discovery_log import DiscoveryLog
 from utils.eligibility import initialize_eligibility
 from utils.protocol import validate_protocol
+from screening import screen_papers
 
 
 def fetch_papers_from_openalex(config, search_terms):
@@ -30,6 +31,7 @@ def run_pipeline(config, search_terms, audit):
     audit.snapshot('deduplicated', papers)
     for paper in papers:
         initialize_eligibility(paper)
+    papers = screen_papers(papers, search_terms, config, audit)
     audit.snapshot('screening', papers)
     existing = load_existing_table(config['sota_table_path'])
     final = merge_with_existing(existing, papers)
