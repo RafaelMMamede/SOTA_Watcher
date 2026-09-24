@@ -1,4 +1,3 @@
-import json
 import unittest
 from unittest.mock import Mock, patch
 from datetime import date
@@ -70,7 +69,7 @@ class RetrievalTests(unittest.TestCase):
             "max_results",
         )
 
-    def test_openalex_uses_title_abstract_oqo_and_exact_dates(self):
+    def test_openalex_uses_title_abstract_oql_and_exact_dates(self):
         session = Mock()
         session.get.return_value.status_code = 200
         session.get.return_value.headers = {}
@@ -90,26 +89,19 @@ class RetrievalTests(unittest.TestCase):
             )
         )
         params = session.get.call_args.kwargs["params"]
-        oqo = json.loads(params["oqo"])
+        oql = params["oql"]
 
         self.assertNotIn("search", params)
+        self.assertNotIn("oqo", params)
         self.assertEqual(pages[0]["search_scope"], "title_abstract")
+        self.assertEqual(pages[0]["query_language"], "oql")
 
-        serialized = json.dumps(oqo)
-        self.assertIn("title_and_abstract.search", serialized)
-        self.assertIn("title_and_abstract.search.exact", serialized)
-        self.assertIn('"\\\"face forgery\\\""', serialized)
-        self.assertNotIn("fulltext.search", serialized)
-
-        date_filters = [
-            node
-            for node in oqo["filter_rows"]
-            if node.get("column_id") == "publication_date"
-        ]
-        self.assertEqual(
-            {(node["operator"], node["value"]) for node in date_filters},
-            {(">=", "2023-01-01"), ("<=", "2026-09-24")},
-        )
+        self.assertIn("works where title/abstract has", oql)
+        self.assertIn('"face forgery"', oql)
+        self.assertIn("deepfake or", oql)
+        self.assertIn("and detection", oql)
+        self.assertIn("publication_date >= (2023-01-01)", oql)
+        self.assertIn("publication_date <= (2026-09-24)", oql)
 
     def test_openalex_broken_cursor(self):
         session = Mock()
