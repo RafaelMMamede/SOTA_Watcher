@@ -32,9 +32,11 @@ as returned because their precision/format varies.
 `max_results=None` (default) retrieves all accessible matches. An explicit cap
 returns a warning if it truncates the query. Search failure raises an exception,
 not a successful partial list. Scopus defaults to `pagination_mode="auto"`:
-subscriber cursor pagination is attempted first; if the first cursor request is
-rejected it falls back to offset paging, which retains the 5,000-record limit.
-The page audit records the effective pagination mode and whether fallback occurred.
+cursor pagination is attempted first; if the first cursor request is rejected it
+falls back to offset paging. Offset fallback uses `offset_page_size` (default 25)
+because the effective service-level maximum can be lower than the documented
+STANDARD maximum of 200, and it retains the 5,000-record limit. The page audit
+records the effective pagination mode and whether fallback occurred.
 
 Scopus defaults to STANDARD view, which may omit abstracts and all but the first
 author. COMPLETE requests richer metadata but does not guarantee every abstract
