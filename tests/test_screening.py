@@ -81,6 +81,81 @@ class ScreeningTests(unittest.TestCase):
                 )
 
     @patch('screening.ollama.requests.post')
+    @patch('screening.ollama.requests.get')
+    def test_truncated_primary_can_be_repaired_without_thinking(self,get,post):
+        get.return_value.json.return_value={
+            'models':[{'name':'qwen3.5:9b','digest':'abc'}]
+        }
+        post.side_effect=[
+            Mock(json=lambda:{
+                'done':True,
+                'done_reason':'length',
+                'eval_count':8192,
+                'message':{'content':'{'},
+            }),
+            Mock(json=lambda:{
+                'done':True,
+                'done_reason':'stop',
+                'eval_count':150,
+                'message':{'content':json.dumps(result())},
+            }),
+        ]
+        extraction={
+            'status':'extracted',
+            'empty_pages':[],
+            'pages':[PAGES[0]],
+            'pdf_sha256':'hash',
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            screened=screen_extraction(
+                extraction,
+                CRITERIA,
+                {'think':'low','num_predict':8192},
+                folder,
+            )
+
+        self.assertEqual(screened['eligibility_decision'],'include')
+        self.assertEqual(post.call_count,2)
+        repair_payload=post.call_args_list[1].kwargs['json']
+        self.assertFalse(repair_payload['think'])
+        self.assertNotIn('format',repair_payload)
+        self.assertEqual(
+            repair_payload['options']['num_predict'],
+            2048,
+        )
+
+    @patch('screening.ollama.requests.post')
+    @patch('screening.ollama.requests.get')
+    def test_bad_primary_evidence_can_be_repaired(self,get,post):
+        get.return_value.json.return_value={
+            'models':[{'name':'qwen3.5:9b','digest':'abc'}]
+        }
+        bad=result(quote='Paraphrased evidence')
+        post.side_effect=[
+            Mock(json=lambda:{
+                'done':True,
+                'done_reason':'stop',
+                'message':{'content':json.dumps(bad)},
+            }),
+            Mock(json=lambda:{
+                'done':True,
+                'done_reason':'stop',
+                'message':{'content':json.dumps(result())},
+            }),
+        ]
+        extraction={
+            'status':'extracted',
+            'empty_pages':[],
+            'pages':[PAGES[0]],
+            'pdf_sha256':'hash',
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            screened=screen_extraction(extraction,CRITERIA,{},folder)
+
+        self.assertEqual(screened['eligibility_decision'],'include')
+        self.assertEqual(post.call_count,2)
+
+    @patch('screening.ollama.requests.post')
     def test_empty_extraction_never_calls_model(self,post):
         with self.assertRaises(ValueError):
             screen_extraction({'status':'needs_review','empty_pages':[1]},CRITERIA,{},'unused')
