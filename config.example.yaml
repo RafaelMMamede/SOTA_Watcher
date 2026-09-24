@@ -51,7 +51,8 @@ screening:
   # Qwen 3.5 structured output is more reliable in Ollama with low thinking.
   think: low
   num_ctx: 32768
-  num_predict: 2048
+  # Leave enough generation budget for low-thinking reasoning + JSON output.
+  num_predict: 8192
   timeout_seconds: 300
   max_papers_per_run: null
   papers_dir: output/papers
