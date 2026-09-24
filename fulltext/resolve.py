@@ -217,7 +217,7 @@ def _openalex_lookup(client, paper, doi, *, email, timeout, retries):
     if not identifier:
         return None, {"resolver": "openalex", "status": "no_identifier"}, None
 
-    url = f"{OPENALEX_API}/works/{quote(identifier, safe='')}"
+    url = f"{OPENALEX_API}/works/{quote(identifier, safe=':/')}"
     work, status = _request_json(
         client,
         url,
@@ -335,7 +335,7 @@ def _unpaywall_lookup(client, doi, *, email, timeout, retries):
 
     data, status = _request_json(
         client,
-        f"{UNPAYWALL_API}/{quote(doi, safe='')}",
+        f"{UNPAYWALL_API}/{quote(doi, safe='/')}",
         params={"email": email},
         headers={"Accept": "application/json"},
         timeout=timeout,
@@ -391,7 +391,7 @@ def _semantic_scholar_lookup(client, doi, *, timeout, retries):
 
     data, status = _request_json(
         client,
-        f"{SEMANTIC_SCHOLAR_API}/paper/{quote('DOI:' + doi, safe='')}",
+        f"{SEMANTIC_SCHOLAR_API}/paper/{quote('DOI:' + doi, safe=':/')}",
         params={"fields": "title,year,externalIds,openAccessPdf,url"},
         headers=headers,
         timeout=timeout,
@@ -433,7 +433,7 @@ def _crossref_candidates(client, doi, *, email, timeout, retries):
     params = {"mailto": email} if email else None
     data, status = _request_json(
         client,
-        f"{CROSSREF_API}/{quote(doi, safe='')}",
+        f"{CROSSREF_API}/{quote(doi, safe='/')}",
         params=params,
         headers={"Accept": "application/json"},
         timeout=timeout,
