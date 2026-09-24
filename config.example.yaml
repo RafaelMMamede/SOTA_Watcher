@@ -26,6 +26,19 @@ sota_table_path: output/sota_table.xlsx
 discovery_log_dir: output/discovery_runs
 save_raw_responses: true
 review_summary_path: output/review_summary.md
+
+# Full-text resolution is independent of discovery source.
+# Only resolver-verified open PDFs are downloaded automatically.
+fulltext_resolution:
+  enabled: true
+  openalex: true
+  unpaywall: true
+  semantic_scholar: true
+  crossref_metadata: true
+  allow_title_fallback: true
+  timeout_seconds: 20
+  max_retries: 2
+
 screening:
   # Enable after reviewing eligibility criteria and testing local Ollama.
   enabled: false
@@ -37,6 +50,8 @@ screening:
   timeout_seconds: 300
   max_papers_per_run: null
   papers_dir: output/papers
+  # Re-query OA resolvers even if resolution.json exists.
+  refresh_resolution: false
   refresh_pdf: false
   force: false
 # Map exact paper_id (preferred) or DOI from the table to a local PDF path.
