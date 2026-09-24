@@ -31,6 +31,8 @@ to_publication_date: "2025-12-31"
 sleep_seconds: 1.0
 
 output_dir: output
+# Permanent per-run records, saved before deduplication and filtering.
+discovery_log_dir: output/discovery_runs
 sota_table_path: output/sota_table.xlsx
 seen_papers_path: output/seen_papers.csv
 recommended_summary_path: output/recommended_papers_summary.md

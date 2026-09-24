@@ -5,6 +5,8 @@ from datetime import date
 import inspect
 import warnings
 
+from utils.discovery_log import utc_now
+
 from sources.openalex_source import search_openalex
 from sources.arxiv_source import search_arxiv
 from sources.ieee_source import search_ieee, iter_ieee_pages
@@ -27,7 +29,7 @@ def get_queries_from_search_terms(search_terms: dict, source: str = "openalex") 
     return items
 
 
-def fetch_papers(config: dict, search_terms: dict) -> list[dict]:
+def fetch_papers(config: dict, search_terms: dict, *, audit=None) -> list[dict]:
     adapters = {"openalex": search_openalex, "arxiv": search_arxiv,
                 "ieee": search_ieee, "scopus": search_scopus}
     signatures = {"openalex": search_openalex, "arxiv": search_arxiv,
@@ -72,11 +74,50 @@ def fetch_papers(config: dict, search_terms: dict) -> list[dict]:
             raise ValueError("OpenAlex adapter currently supports at most 200 results per query.")
         plan.append((source, kwargs, get_queries_from_search_terms(search_terms, source)))
 
+    if audit:
+        audit.snapshot('search_plan', [{'source': source, 'options': kwargs,
+                        'queries': [{'topic': topic, 'query': query} for topic, query in queries]}
+                       for source, kwargs, queries in plan])
     papers = []
+    query_number = 0
     for source, kwargs, queries in plan:
         for topic, query in queries:
+            query_number += 1
+            context = {'query_id': str(query_number), 'source': source,
+                       'search_topic': topic, 'query': query}
             print(f"\nSearching {source} [{topic}]: {query}")
-            # Propagate failures: an unsuccessful search is not an empty result.
-            results = adapters[source](query=query, **kwargs)
-            papers.extend({**paper, "search_topic": topic} for paper in results)
+            if audit:
+                audit.event('query_started', **context, options=kwargs)
+            coverage = 'not_verified'
+            try:
+                if audit and source in {'ieee', 'scopus'}:
+                    iterator = iter_ieee_pages if source == 'ieee' else iter_scopus_pages
+                    results = []
+                    for page_number, page in enumerate(iterator(query=query, **kwargs), 1):
+                        rows = [{**paper, 'search_topic': topic, 'retrieved_at': utc_now(),
+                                 'run_id': audit.run_id, 'query_id': str(query_number)}
+                                for paper in page['papers']]
+                        audit.event('query_page', **context, page_number=page_number,
+                                    request_params=page['request_params'],
+                                    total_results=page['total_results'], complete=page['complete'],
+                                    stop_reason=page['stop_reason'], records=rows)
+                        results.extend(rows)
+                        coverage = 'exhausted' if page['complete'] else page['stop_reason']
+                        if page['stop_reason'] == 'max_results':
+                            warnings.warn(f"{source}: search capped at {len(results)} of {page['total_results']} matches.", stacklevel=2)
+                else:
+                    results = adapters[source](query=query, **kwargs)
+            except BaseException as exc:
+                if audit:
+                    audit.event('query_failed', **context, error_type=type(exc).__name__)
+                raise
+            timestamp = utc_now()
+            results = [{**paper, 'search_topic': topic, 'retrieved_at': paper.get('retrieved_at', timestamp),
+                        **({'run_id': audit.run_id, 'query_id': str(query_number)} if audit else {})}
+                       for paper in results]
+            if audit:
+                audit.event('query_succeeded', **context, retrieved_count=len(results),
+                            cap_reached=kwargs['max_results'] is not None and len(results) >= kwargs['max_results'],
+                            coverage=coverage, records=results)
+            papers.extend(results)
     return papers

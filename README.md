@@ -392,7 +392,58 @@ The result cap applies per source, per query. The current OpenAlex adapter
 supports at most 200 results per query; it and arXiv require finite caps.
 IEEE/Scopus support `max_results: null` for uncapped searches subject to their
 adapter/API limits. Query/settings validation happens before requests; API
-failures stop the run rather than being treated as empty searches. No partial
-run is saved by this dispatcher. This change connects discovery only: the
+failures stop the run rather than being treated as empty searches. The main runner archives completed queries and IEEE/Scopus pages even when
+a later request fails. This change connects discovery only: the
 existing deduplication, scoring, filtering and LLM stages still run afterwards.
 Disable both Ollama stages in config for a discovery-only smoke test.
+
+
+### Discovery archive and duplicate merging
+
+Every invocation of `python sota_watcher.py` creates a unique directory under
+`output/discovery_runs/` (override with `discovery_log_dir`). The archive is
+independent of the filtered Excel reading queue:
+
+- `search_plan.json`: source queries and effective adapter arguments.
+- `search_terms.json` and `screening_settings.json`: inputs used for triage.
+- `events.jsonl`: append-only run/query outcomes, timestamps, returned records,
+  result counts, and IEEE/Scopus page totals/completion status. Empty successful
+  searches are distinct from failures. A started event without a terminal event
+  indicates an interrupted run.
+- `discovered.json`: all returned records, including duplicates, before scoring.
+- `deduplicated.json`: combined metadata and provenance, before filtering.
+- `screening.json`: every scored candidate with its retained/excluded status and
+  reason, even if all candidates are excluded.
+- `analyzed.json`: retained candidates after the optional Ollama stages.
+- `merged_table_before_filter.json`: existing table plus newly analyzed papers,
+  before the optional removal of old low-scoring rows.
+
+Later-stage snapshots exist only if the run reaches that stage. A failed query
+still stops the pipeline, but previous events remain available; IEEE/Scopus
+pages are saved as they arrive. These are **normalized adapter records**, not
+complete raw provider responses. OpenAlex/arXiv coverage remains unverified;
+reaching a configured cap is not proof that a search is exhaustive. Run success
+means the pipeline finished, not that all database matches were retrieved.
+Credentials and exception messages are excluded from the log. Do not add API
+keys to query text. Calling `fetch_papers` directly requires `audit=DiscoveryLog`
+(an instance, ideally used as a context manager) to enable archival logging.
+
+Deduplication links records through DOI, version-independent arXiv IDs, provider
+IDs, and recognized DOI/arXiv URLs, including records that bridge two identifiers.
+Generic URLs and exact normalized title+year are fallbacks only when stronger
+identifiers are absent. Matching is deliberately conservative: matching titles
+alone do not merge records that have distinct provider identifiers. arXiv
+versions sharing an ID are combined; original versions remain in the archive
+and metadata variants. This is identifier matching, not fuzzy entity resolution.
+
+Merged records retain `sources`, `queries`, `search_topics`, `provenance` and
+`metadata_variants`. Longer title/abstract/author text fills out metadata; the
+largest citation count is kept. Other nonempty fields prefer the first record,
+with conflicting values retained in `metadata_variants`. Longer text is a
+completeness heuristic, not a guarantee of correctness. Existing nonempty manual
+decisions and notes take precedence when updating the Excel table.
+
+Structured fields are serialized as JSON in Excel and restored on loading.
+Oversized Excel cells cause an explicit error instead of silent truncation;
+the full per-run JSON archive remains available. Keep this archive alongside
+your review data: the Excel table is still a filtered working view.

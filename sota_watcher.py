@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from sources.discovery import fetch_papers, get_queries_from_search_terms
+from utils.discovery_log import DiscoveryLog
 from utils.config import load_config, load_search_terms
 from utils.io import make_output_dirs, load_existing_table, save_table
 from utils.scoring import score_paper
@@ -52,7 +53,9 @@ def filter_papers(papers: list[dict], config: dict) -> list[dict]:
     for paper in papers:
         score = paper.get("triage_score", 0)
 
+        paper['screening_status'] = 'excluded'
         if score < min_score:
+            paper['screening_reason'] = 'below_min_triage_score'
             continue
 
         is_repository = bool(paper.get("is_repository", False))
@@ -64,8 +67,11 @@ def filter_papers(papers: list[dict], config: dict) -> list[dict]:
             elif include_preprints and openalex_type == "preprint":
                 pass
             else:
+                paper["screening_reason"] = "repository_excluded"
                 continue
 
+        paper["screening_status"] = "retained"
+        paper["screening_reason"] = "passed_configured_filters"
         filtered.append(paper)
 
     print(
@@ -92,15 +98,12 @@ def drop_low_score_existing_rows(df: pd.DataFrame, config: dict) -> pd.DataFrame
     return df[scores >= min_score].copy()
 
 
-def main() -> None:
-    config = load_config("config.yaml")
-    search_terms = load_search_terms(config.get("search_terms_path", "search_terms.yaml"))
-
-    make_output_dirs(config)
-
-    all_papers = fetch_papers(config, search_terms)
+def run_pipeline(config: dict, search_terms: dict, audit: DiscoveryLog) -> None:
+    all_papers = fetch_papers(config, search_terms, audit=audit)
+    audit.snapshot('discovered', all_papers)
 
     unique_papers = deduplicate_papers(all_papers)
+    audit.snapshot("deduplicated", unique_papers)
 
     print(f"\nRaw papers found: {len(all_papers)}")
     print(f"Unique papers after deduplication: {len(unique_papers)}")
@@ -115,7 +118,9 @@ def main() -> None:
         search_terms,
     )
 
-    unique_papers = filter_papers(unique_papers, config)
+    candidates = unique_papers
+    unique_papers = filter_papers(candidates, config)
+    audit.snapshot('screening', candidates)
 
     if not unique_papers:
         print("No papers passed the filter. Skipping table save.")
@@ -124,15 +129,32 @@ def main() -> None:
     unique_papers = classify_papers_with_ollama(unique_papers, config)
     unique_papers = deep_analyze_recommended_papers_with_ollama(unique_papers, config)
 
+    audit.snapshot("analyzed", unique_papers)
+
     existing_df = load_existing_table(config["sota_table_path"])
     final_df = merge_with_existing(existing_df, unique_papers)
 
+    audit.snapshot("merged_table_before_filter", final_df.to_dict("records"))
     final_df = drop_low_score_existing_rows(final_df, config)
 
     save_table(final_df, config["sota_table_path"])
 
     print(f"\nSaved table to: {config['sota_table_path']}")
     print(f"Total rows in table: {len(final_df)}")
+
+
+def main() -> None:
+    config = load_config("config.yaml")
+    search_terms = load_search_terms(config.get("search_terms_path", "search_terms.yaml"))
+    make_output_dirs(config)
+    root = config.get("discovery_log_dir", str(config.get("output_dir", "output")) + "/discovery_runs")
+    with DiscoveryLog(root) as audit:
+        print(f"Discovery archive: {audit.path}")
+        audit.snapshot('screening_settings', {k: config[k] for k in (
+            'min_triage_score', 'scoring', 'include_repositories', 'include_datasets',
+            'include_preprints', 'drop_existing_below_min_score') if k in config})
+        audit.snapshot('search_terms', search_terms)
+        run_pipeline(config, search_terms, audit)
 
 
 if __name__ == "__main__":
