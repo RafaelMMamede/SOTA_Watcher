@@ -85,13 +85,14 @@ def fetch_papers(config: dict, search_terms: dict, *, audit=None) -> list[dict]:
                 ("from_publication_date", "start_year"),
                 ("to_publication_date", "end_year"),
             ):
-                if config.get(global_key):
+                exact_value = options.get(global_key, config.get(global_key))
+                if exact_value:
                     # Scopus filters the provider request by year, then the
                     # adapter enforces this exact YYYY-MM-DD bound locally.
-                    kwargs[global_key] = config[global_key]
+                    kwargs[global_key] = exact_value
                     if year_key not in options:
                         kwargs[year_key] = date.fromisoformat(
-                            str(config[global_key])
+                            str(exact_value)
                         ).year
 
         else:
