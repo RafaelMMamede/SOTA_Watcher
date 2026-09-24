@@ -71,6 +71,7 @@ def screen_papers(papers, protocol, config, audit=None):
         paper["fulltext_folder"] = str(folder)
         folder.mkdir(parents=True, exist_ok=True)
 
+        stage = "resolution"
         try:
             local = (
                 config.get("local_pdfs", {}).get(paper.get("paper_id"))
@@ -106,6 +107,7 @@ def screen_papers(papers, protocol, config, audit=None):
             _resolution_fields(paper, resolution)
             paper["fulltext_resolution_cache_hit"] = resolution_cache_hit
 
+            stage = "download"
             download = fetch_pdf(
                 resolution,
                 folder,
@@ -128,9 +130,11 @@ def screen_papers(papers, protocol, config, audit=None):
                 ):
                     time.sleep(3)
 
+                stage = "extraction"
                 extraction = extract_pdf(folder / "paper.pdf", folder)
                 paper["pdf_sha256"] = extraction["pdf_sha256"]
                 paper["fulltext_status"] = extraction["status"]
+                stage = "screening"
                 paper.update(
                     screen_extraction(
                         extraction,
@@ -143,11 +147,18 @@ def screen_papers(papers, protocol, config, audit=None):
         except Exception as exc:
             paper["eligibility_decision"] = "uncertain"
             paper["eligibility_status"] = "error"
+            message = str(exc).strip()
             paper["eligibility_reason"] = (
-                f"{type(exc).__name__}: full-text retrieval/extraction/"
-                "screening failed; inspect artifacts and retry."
+                f"{type(exc).__name__} during {stage}: "
+                + (
+                    message
+                    if message
+                    else "full-text pipeline failed; inspect artifacts and retry."
+                )
             )
             paper["eligibility_error_type"] = type(exc).__name__
+            paper["eligibility_error_stage"] = stage
+            paper["eligibility_error_message"] = message
 
         write_json(
             folder / "latest_eligibility.json",
