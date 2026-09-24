@@ -51,6 +51,61 @@ class ScreeningTests(unittest.TestCase):
             self.assertEqual(papers[0]['eligibility_status'],'fulltext_unavailable')
             self.assertEqual(papers[0]['eligibility_decision'],'uncertain')
             self.assertEqual(papers[1]['eligibility_status'],'deferred')
+    @patch('screening.pipeline.extract_pdf')
+    @patch('screening.pipeline.fetch_pdf')
+    @patch('screening.pipeline.resolve_paper')
+    @patch('screening.pipeline.screen_extraction')
+    def test_pipeline_preserves_screening_error_detail(
+        self,
+        screen,
+        resolve,
+        fetch,
+        extract,
+    ):
+        resolve.return_value = {
+            'status':'resolved',
+            'kind':'local',
+            'resolver':'local',
+            'path':'unused.pdf',
+        }
+        fetch.return_value = {'status':'downloaded','cache_hit':True}
+        extract.return_value = {
+            'status':'extracted',
+            'empty_pages':[],
+            'pages':PAGES,
+            'pdf_sha256':'hash',
+        }
+        screen.side_effect = ValueError(
+            'Ollama part 1: structured output validation failed: '
+            'Evidence quote/page does not match supplied PDF text.'
+        )
+
+        with tempfile.TemporaryDirectory() as folder:
+            papers=[{'paper_id':'one'}]
+            screen_papers(
+                papers,
+                {'eligibility':{'criteria':CRITERIA}},
+                {
+                    'screening':{
+                        'enabled':True,
+                        'papers_dir':folder,
+                        'max_papers_per_run':1,
+                    },
+                    'local_pdfs':{'one':'unused.pdf'},
+                },
+            )
+
+        self.assertEqual(papers[0]['eligibility_status'],'error')
+        self.assertEqual(papers[0]['eligibility_error_stage'],'screening')
+        self.assertIn(
+            'Evidence quote/page does not match',
+            papers[0]['eligibility_error_message'],
+        )
+        self.assertIn(
+            'during screening',
+            papers[0]['eligibility_reason'],
+        )
+
     def test_new_screening_replaces_old_bundle_but_not_human(self):
         old={'doi':'10.1/a','manual_decision':'include','notes':'keep',
              'eligibility_decision':'include','eligibility_status':'screened','eligibility_evidence':[{'page':1}]}
