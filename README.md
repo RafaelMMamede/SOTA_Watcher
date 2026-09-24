@@ -316,3 +316,14 @@ full-paper chunking
 full-paper LLM analysis
 ```
 
+
+## Fetch and extract full papers
+
+For versioned arXiv papers or local PDFs, see [fulltext/README.md](fulltext/README.md).
+
+```bash
+python -m fulltext --arxiv 2609.10002v1 --output output/papers/2609.10002v1
+```
+
+This independent command saves the PDF, page-level Markdown, and provenance;
+repeated runs reuse validated caches. It does not invoke an LLM.
