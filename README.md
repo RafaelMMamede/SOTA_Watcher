@@ -130,9 +130,13 @@ outputs; some Ollama/Qwen 3.5 combinations have returned unconstrained prose in
 that mode. The example configuration therefore uses `think: low`.
 
 With thinking enabled, `num_predict` is the maximum generated-token budget for the
-request, so reasoning can consume part of it. The example uses `num_predict: 8192`;
-a `done_reason="length"` response is retained as an incomplete artifact and fails
-screening rather than accepting truncated JSON.
+request, so reasoning can consume part of it. The example uses `num_predict: 8192`.
+If the primary response truncates or fails strict schema/evidence validation, the
+pipeline performs at most one compact repair call (`repair_num_predict: 2048`)
+with thinking disabled and no server-side `format` constraint. The repair prompt
+still includes the schema and supplied pages, and its output must pass the same
+local exact-quote/schema validator. Primary and repair artifacts are retained
+separately; no invalid or truncated response is accepted as a screening result.
 
 Every extracted page is sent in bounded parts to `/api/chat`. No pages are silently
 truncated. A conservative UTF-8 byte budget leaves space for instructions/schema
