@@ -4,6 +4,11 @@ topics:
     queries:
       - example query for topic 1
       - another example query for topic 1
+    # Overrides replace this topic's shared queries for that source.
+    # Scopus requires explicit native queries; [] skips a topic for a source.
+    source_queries:
+      scopus:
+        - 'TITLE-ABS-KEY("example research topic 1")'
     topic_terms:
       example keyword: 5
       another keyword: 4
@@ -14,6 +19,9 @@ topics:
     queries:
       - example query for topic 2
       - another example query for topic 2
+    source_queries:
+      scopus:
+        - 'TITLE-ABS-KEY("example research topic 2")'
     topic_terms:
       method keyword: 5
       evaluation keyword: 4

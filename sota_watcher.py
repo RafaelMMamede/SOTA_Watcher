@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from sources.openalex_source import search_openalex
+from sources.discovery import fetch_papers, get_queries_from_search_terms
 from utils.config import load_config, load_search_terms
 from utils.io import make_output_dirs, load_existing_table, save_table
 from utils.scoring import score_paper
@@ -10,45 +10,9 @@ from utils.deduplication import deduplicate_papers, merge_with_existing
 from classify_with_ollama import classify_papers_with_ollama
 from deep_analyze_with_ollama import deep_analyze_recommended_papers_with_ollama
 
-def get_queries_from_search_terms(search_terms: dict) -> list[tuple[str, str]]:
-    """
-    Returns:
-        [(topic_key, query), ...]
-    """
-    query_items = []
-
-    topics = search_terms.get("topics", {})
-
-    for topic_key, topic_cfg in topics.items():
-        for query in topic_cfg.get("queries", []):
-            query_items.append((topic_key, query))
-
-    return query_items
-
-
 def fetch_papers_from_openalex(config: dict, search_terms: dict) -> list[dict]:
-    all_papers = []
-
-    query_items = get_queries_from_search_terms(search_terms)
-
-    for topic_key, query in query_items:
-        print(f"\nSearching OpenAlex [{topic_key}]: {query}")
-
-        papers = search_openalex(
-            query=query,
-            max_results=config.get("max_results_per_query", 25),
-            mailto=config.get("mailto"),
-            from_publication_date=config.get("from_publication_date"),
-            to_publication_date=config.get("to_publication_date"),
-            sleep_seconds=config.get("sleep_seconds", 1.0),
-        )
-
-        for paper in papers:
-            paper["search_topic"] = topic_key
-
-        all_papers.extend(papers)
-
-    return all_papers
+    """Compatibility wrapper for callers that explicitly request OpenAlex."""
+    return fetch_papers({**config, "sources": ["openalex"]}, search_terms)
 
 
 def add_scores_and_manual_fields(
@@ -134,7 +98,7 @@ def main() -> None:
 
     make_output_dirs(config)
 
-    all_papers = fetch_papers_from_openalex(config, search_terms)
+    all_papers = fetch_papers(config, search_terms)
 
     unique_papers = deduplicate_papers(all_papers)
 
@@ -156,7 +120,7 @@ def main() -> None:
     if not unique_papers:
         print("No papers passed the filter. Skipping table save.")
         return
-    
+
     unique_papers = classify_papers_with_ollama(unique_papers, config)
     unique_papers = deep_analyze_recommended_papers_with_ollama(unique_papers, config)
 

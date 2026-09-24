@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 import time
 import urllib.parse
 from typing import Dict, List
@@ -117,8 +118,18 @@ def search_arxiv(
     sort_by: str = "submittedDate",
     sort_order: str = "descending",
     sleep_seconds: float = 3.0,
+    native_query: bool = False,
+    from_publication_date: str | None = None,
+    to_publication_date: str | None = None,
 ) -> List[Dict]:
-    arxiv_query = _query_to_arxiv_syntax(query)
+    arxiv_query = query if native_query else _query_to_arxiv_syntax(query)
+    if from_publication_date or to_publication_date:
+        lower = date.fromisoformat(str(from_publication_date)) if from_publication_date else date(1991, 1, 1)
+        upper = date.fromisoformat(str(to_publication_date)) if to_publication_date else date.today()
+        if lower > upper:
+            raise ValueError("from_publication_date must not exceed to_publication_date.")
+        arxiv_query = f"({arxiv_query}) AND submittedDate:[{lower:%Y%m%d}0000 TO {upper:%Y%m%d}2359]"
+
 
     params = {
         "search_query": arxiv_query,
@@ -159,7 +170,11 @@ def search_arxiv(
             "year": int(entry.published[:4]) if entry.get("published") else None,
             "published_date": entry.get("published", ""),
             "updated_date": entry.get("updated", ""),
-            "venue": "",
+            "venue": "arXiv",
+            "venue_type": "repository",
+            "is_repository": True,
+            "openalex_type": "preprint",  # Compatibility with existing scoring/filtering.
+            "has_abstract": bool(clean_text(entry.get("summary", ""))),
             "abstract": clean_text(entry.get("summary", "")),
             "url": entry.get("id", ""),
             "doi": doi,

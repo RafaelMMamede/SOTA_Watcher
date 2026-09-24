@@ -1,5 +1,21 @@
 sources:
   - openalex
+  # Uncomment after adding source_queries below in search_terms.yaml.
+  # - arxiv
+  # - ieee
+  # - scopus
+
+# Each source can override max_results (otherwise max_results_per_query).
+# API keys are read from IEEE_API_KEY / SCOPUS_API_KEY environment variables.
+source_options:
+  arxiv:
+    sleep_seconds: 3.0
+    native_query: false
+  ieee:
+    page_size: 100
+  scopus:
+    view: STANDARD
+    page_size: 25
 
 search_terms_path: search_terms.yaml
 

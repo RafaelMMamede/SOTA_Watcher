@@ -185,7 +185,7 @@ search_terms.yaml
 
 This file controls:
 
-- Which queries are sent to OpenAlex
+- Which queries are sent to the configured discovery sources
 - Which topic labels are assigned
 - Which terms increase the triage score
 - Which general terms are treated as priority indicators
@@ -327,3 +327,72 @@ python -m fulltext --arxiv 2609.10002v1 --output output/papers/2609.10002v1
 
 This independent command saves the PDF, page-level Markdown, and provenance;
 repeated runs reuse validated caches. It does not invoke an LLM.
+
+
+### Multi-source discovery
+
+`python sota_watcher.py` searches the adapters listed in `config.yaml`:
+
+```yaml
+sources: [openalex, arxiv, ieee, scopus]
+max_results_per_query: 100
+source_options:
+  arxiv:
+    sleep_seconds: 3.0
+    native_query: true
+  scopus:
+    view: STANDARD
+    max_results: 50
+  ieee:
+    page_size: 100
+```
+
+Existing configurations without `sources` retain OpenAlex-only behaviour.
+Disabled sources are not called. Set `IEEE_API_KEY` and `SCOPUS_API_KEY` in
+ the environment before running; `SCOPUS_INSTTOKEN` is optional. The runner
+ does not load a `.env` file automatically. Keep credentials out of YAML.
+
+Shared `topics.<topic>.queries` remain the fallback for OpenAlex, arXiv and
+IEEE. Write source-specific replacements in `search_terms.yaml`:
+
+```yaml
+topics:
+  adversarial_deepfakes:
+    label: Adversarial deepfake detection
+    queries:
+      - deepfake adversarial
+    source_queries:
+      arxiv:
+        - 'all:deepfake AND all:adversarial'
+      ieee:
+        - '(deepfake AND adversarial)'
+      scopus:
+        - 'TITLE-ABS-KEY(deepfake AND adversarial)'
+    topic_terms:
+      deepfake: 5
+      adversarial: 5
+```
+
+Scopus requires an explicit `source_queries.scopus` list for each topic;
+use `[]` to skip a topic. Overrides replace, rather than append to, shared
+queries. arXiv defaults to converting plain words/quoted phrases into AND
+queries. Set `native_query: true` when providing arXiv field/Boolean syntax;
+this applies to **all** arXiv queries, including fallback queries. Query syntax
+and coverage differ across databases; this is not automatic query translation.
+
+Global date bounds use publication dates for OpenAlex, submission dates for
+arXiv, and inclusive publication **years** for IEEE/Scopus (with a warning).
+Per-source date/year options override global bounds. Only OpenAlex defaults an
+omitted upper bound to today; arXiv also does so when a lower bound is set.
+IEEE/Scopus have no implicit upper year. For reproducible searches, set both
+bounds explicitly. The arXiv delay defaults to at least three seconds instead
+of inheriting a shorter global delay; an explicit source override takes priority.
+
+The result cap applies per source, per query. The current OpenAlex adapter
+supports at most 200 results per query; it and arXiv require finite caps.
+IEEE/Scopus support `max_results: null` for uncapped searches subject to their
+adapter/API limits. Query/settings validation happens before requests; API
+failures stop the run rather than being treated as empty searches. No partial
+run is saved by this dispatcher. This change connects discovery only: the
+existing deduplication, scoring, filtering and LLM stages still run afterwards.
+Disable both Ollama stages in config for a discovery-only smoke test.
