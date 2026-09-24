@@ -12,6 +12,7 @@ import os
 import time
 import warnings
 from collections.abc import Iterator
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 
@@ -121,6 +122,30 @@ def _publication_date_in_window(
     return True
 
 
+def _next_cursor(results: dict) -> str | None:
+    """Read the Scopus deep-pagination cursor from either response form."""
+    cursor = results.get("cursor")
+    if isinstance(cursor, dict):
+        value = cursor.get("@next")
+        if value:
+            return str(value)
+
+    links = results.get("link") or []
+    if isinstance(links, dict):
+        links = [links]
+    for link in links:
+        if not isinstance(link, dict) or link.get("@ref") != "next":
+            continue
+        href = link.get("@href")
+        if not href:
+            continue
+        values = parse_qs(urlsplit(href).query).get("cursor")
+        if values and values[0]:
+            return values[0]
+
+    return None
+
+
 def iter_scopus_pages(
     query: str,
     *,
@@ -133,6 +158,7 @@ def iter_scopus_pages(
     end_year: int | None = None,
     from_publication_date: str | None = None,
     to_publication_date: str | None = None,
+    pagination_mode: str = "auto",
     sleep_seconds: float = 1.0,
     timeout: float = 30,
     max_retries: int = 3,
@@ -144,12 +170,19 @@ def iter_scopus_pages(
     uses those year bounds as an API prefilter, then applies exact inclusive
     YYYY-MM-DD bounds locally using prism:coverDate.
 
-    Offset paging can access at most 5,000 source records. An uncapped search
-    whose year-prefiltered result set exceeds that limit fails explicitly.
+    Cursor pagination is preferred for stable forward deep pagination.
+    pagination_mode='auto' tries cursor mode first and falls back to offset mode
+    only if the first cursor request is rejected. Offset fallback retains the
+    5,000-source-record limit and fails if repeated records make completeness
+    uncertain.
     """
     view = view.upper()
     if view not in {"STANDARD", "COMPLETE"}:
         raise ValueError("view must be STANDARD or COMPLETE.")
+
+    pagination_mode = str(pagination_mode).lower()
+    if pagination_mode not in {"auto", "cursor", "offset"}:
+        raise ValueError("pagination_mode must be auto, cursor or offset.")
     validate(
         query,
         max_results,
@@ -191,62 +224,97 @@ def iter_scopus_pages(
         if end_year is not None:
             effective_query += f" AND PUBYEAR < {end_year + 1}"
 
-    params = {
+    base_params = {
         "query": effective_query,
         "view": view,
         "sort": "-coverDate",
     }
     client = session if session is not None else requests.Session()
 
+    mode = "cursor" if pagination_mode in {"auto", "cursor"} else "offset"
+    cursor = "*"
+    seen_cursors = {"*"}
     source_retrieved = 0
     exact_retrieved = 0
+    exact_seen = 0
     locally_excluded = 0
+    cap_trimmed = 0
     total = None
-    seen = set()
+    seen_ids: set[str] = set()
+    fallback_used = False
 
     try:
         while True:
-            if source_retrieved >= 5000 and (
-                total is None or source_retrieved < total
-            ):
-                raise RuntimeError(
-                    "Scopus: offset search reached 5,000 source records before "
-                    "the exact-date search completed. Narrow the query/year range."
-                )
-
             remaining = (
-                page_size
+                None
                 if max_results is None
                 else max_results - exact_retrieved
             )
-            if remaining <= 0:
+            if remaining is not None and remaining <= 0:
                 return
 
-            params["start"] = source_retrieved
-            params["count"] = min(
-                page_size,
-                remaining,
-                5000 - source_retrieved,
-            )
-            if total is not None:
-                params["count"] = min(
-                    params["count"],
-                    total - source_retrieved,
-                )
+            params = dict(base_params)
 
-            data = get_json(
-                client,
-                SCOPUS_API_URL,
-                params=params,
-                headers=headers,
-                timeout=timeout,
-                max_retries=max_retries,
-                source="Scopus",
-            )
+            if mode == "cursor":
+                params["cursor"] = cursor
+                params["count"] = (
+                    page_size
+                    if remaining is None
+                    else min(page_size, remaining)
+                )
+            else:
+                if source_retrieved >= 5000 and (
+                    total is None or source_retrieved < total
+                ):
+                    raise RuntimeError(
+                        "Scopus: offset fallback reached 5,000 source records "
+                        "before the exact-date search completed. Use cursor "
+                        "pagination with subscriber entitlement or narrow the "
+                        "query/year range."
+                    )
+                params["start"] = source_retrieved
+                params["count"] = min(
+                    page_size,
+                    5000 - source_retrieved,
+                )
+                if total is not None:
+                    params["count"] = min(
+                        params["count"],
+                        total - source_retrieved,
+                    )
+
+            try:
+                data = get_json(
+                    client,
+                    SCOPUS_API_URL,
+                    params=params,
+                    headers=headers,
+                    timeout=timeout,
+                    max_retries=max_retries,
+                    source="Scopus",
+                )
+            except RuntimeError:
+                if (
+                    pagination_mode == "auto"
+                    and mode == "cursor"
+                    and source_retrieved == 0
+                ):
+                    warnings.warn(
+                        "Scopus cursor pagination was rejected; falling back "
+                        "to offset pagination (limited to 5,000 source records).",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    mode = "offset"
+                    fallback_used = True
+                    continue
+                raise
+
             results = data.get("search-results")
             if not isinstance(results, dict):
                 raise RuntimeError(
-                    "Scopus: missing search-results or API error; search incomplete."
+                    "Scopus: missing search-results or API error; "
+                    "search incomplete."
                 )
 
             reported = number(results.get("opensearch:totalResults"), -1)
@@ -256,27 +324,28 @@ def iter_scopus_pages(
                 )
             if total is not None and total != reported:
                 raise RuntimeError(
-                    "Scopus: result total changed during pagination; rerun search."
+                    "Scopus: result total changed during pagination; "
+                    "rerun search."
                 )
             total = reported
 
-            # With no cap we must be able to scan the complete provider-side
-            # year-filtered result set to enforce exact local dates.
-            if max_results is None and total > 5000:
+            if mode == "offset" and max_results is None and total > 5000:
                 raise RuntimeError(
-                    "Scopus: offset search exceeds 5,000 records. Narrow "
-                    "query/year range; no complete exact-date result can be returned."
+                    "Scopus: offset fallback exceeds 5,000 source records. "
+                    "Use cursor pagination with subscriber entitlement or "
+                    "narrow the query/year range."
                 )
 
             entries = results.get("entry") or []
             if isinstance(entries, dict):
                 entries = [entries]
-
-            # Scopus represents an empty result as an error entry with total=0.
             if total == 0:
                 entries = []
 
-            if not isinstance(entries, list) or len(entries) > params["count"]:
+            if (
+                not isinstance(entries, list)
+                or len(entries) > params["count"]
+            ):
                 raise RuntimeError(
                     "Scopus: invalid result page; search incomplete."
                 )
@@ -284,63 +353,104 @@ def iter_scopus_pages(
                 raise RuntimeError(
                     "Scopus: premature empty page; search incomplete."
                 )
-            if any("error" in item for item in entries):
+            if any(
+                isinstance(item, dict) and "error" in item
+                for item in entries
+            ):
                 raise RuntimeError(
                     "Scopus: API error entry; search incomplete."
                 )
 
             source_papers = [_normalise(item, query) for item in entries]
-            for paper in source_papers:
-                if paper["paper_id"] in seen:
-                    raise RuntimeError(
-                        "Scopus: repeated record during pagination; search incomplete."
-                    )
-                seen.add(paper["paper_id"])
 
+            duplicate_ids = [
+                paper["paper_id"]
+                for paper in source_papers
+                if paper["paper_id"] in seen_ids
+            ]
+            if duplicate_ids:
+                raise RuntimeError(
+                    f"Scopus: repeated record during {mode} pagination; "
+                    "search completeness is uncertain."
+                )
+            seen_ids.update(paper["paper_id"] for paper in source_papers)
             source_retrieved += len(source_papers)
 
-            papers = [
+            valid = [
                 paper
                 for paper in source_papers
                 if _publication_date_in_window(paper, lower, upper)
             ]
-            locally_excluded += len(source_papers) - len(papers)
+            locally_excluded += len(source_papers) - len(valid)
+            exact_seen += len(valid)
+
+            if remaining is None:
+                papers = valid
+            else:
+                papers = valid[:remaining]
+                cap_trimmed += max(0, len(valid) - len(papers))
+
             exact_retrieved += len(papers)
 
-            # batch() computes provider exhaustion using source_retrieved.
-            page = batch(
-                "scopus",
-                query,
-                params,
-                data,
-                papers,
-                total,
-                source_retrieved,
-                None,
-            )
-            page["source_retrieved_count"] = source_retrieved
-            page["retrieved_count"] = exact_retrieved
-            page["locally_excluded_count"] = locally_excluded
-            page["exact_date_bounds"] = {
-                "from": lower.isoformat() if lower else None,
-                "to": upper.isoformat() if upper else None,
-            }
-            page["exact_date_total"] = (
-                exact_retrieved if page["complete"] else None
-            )
-
-            if (
+            provider_complete = source_retrieved >= total
+            cap_reached = (
                 max_results is not None
                 and exact_retrieved >= max_results
-                and not page["complete"]
-            ):
-                page["complete"] = False
-                page["stop_reason"] = "max_results"
+                and (not provider_complete or cap_trimmed > 0)
+            )
+
+            complete = provider_complete and not cap_reached
+            stop_reason = (
+                "exhausted"
+                if complete
+                else "max_results"
+                if cap_reached
+                else "more_pages"
+            )
+
+            next_cursor = (
+                _next_cursor(results)
+                if mode == "cursor" and stop_reason == "more_pages"
+                else None
+            )
+            if mode == "cursor" and stop_reason == "more_pages":
+                if not next_cursor or next_cursor in seen_cursors:
+                    raise RuntimeError(
+                        "Scopus: cursor pagination ended early or repeated "
+                        "its cursor; search incomplete."
+                    )
+
+            page = {
+                "source": "scopus",
+                "query": query,
+                "request_params": dict(params),
+                "raw_response": data,
+                "papers": papers,
+                "total_results": total,
+                "source_retrieved_count": source_retrieved,
+                "retrieved_count": exact_retrieved,
+                "exact_records_seen": exact_seen,
+                "locally_excluded_count": locally_excluded,
+                "cap_trimmed_count": cap_trimmed,
+                "complete": complete,
+                "stop_reason": stop_reason,
+                "pagination_mode": mode,
+                "cursor_fallback_used": fallback_used,
+                "exact_date_bounds": {
+                    "from": lower.isoformat() if lower else None,
+                    "to": upper.isoformat() if upper else None,
+                },
+                "exact_date_total": exact_seen if provider_complete else None,
+            }
 
             yield page
 
-            if page["stop_reason"] != "more_pages":
+            if stop_reason != "more_pages":
                 return
+
+            if mode == "cursor":
+                seen_cursors.add(next_cursor)
+                cursor = next_cursor
 
             time.sleep(sleep_seconds)
     finally:
