@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pymupdf
 
@@ -117,6 +117,32 @@ class FulltextTest(unittest.TestCase):
             "Example Repository",
         )
         self.assertEqual(resolution["resolved_via"], "doi")
+
+    def test_environment_email_overrides_yaml_placeholder(self):
+        session = Mock()
+        session.get.return_value = json_response({"is_oa": False})
+
+        with patch.dict(
+            "os.environ",
+            {"UNPAYWALL_EMAIL": "real@example.org"},
+            clear=False,
+        ):
+            resolution = resolve_paper(
+                {"doi": "10.1234/example"},
+                resolver_config={
+                    "email": "your_email@example.com",
+                    "openalex": False,
+                    "semantic_scholar": False,
+                    "crossref_metadata": False,
+                },
+                session=session,
+            )
+
+        self.assertEqual(resolution["status"], "unavailable")
+        self.assertEqual(
+            session.get.call_args.kwargs["params"]["email"],
+            "real@example.org",
+        )
 
     def test_unpaywall_fallback_after_openalex_has_no_pdf(self):
         session = Mock()
