@@ -28,6 +28,31 @@ def digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
+def parse_structured_content(content):
+    """Parse strict JSON, allowing only a single surrounding Markdown fence."""
+    if not isinstance(content, str):
+        raise ValueError("message.content is not text.")
+
+    text = content.strip()
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+
+    fenced = re.fullmatch(
+        r"\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if fenced:
+        try:
+            return json.loads(fenced.group(1).strip())
+        except ValueError:
+            pass
+
+    raise ValueError("model did not return valid JSON.")
+
+
 def validate_result(result, criteria, pages):
     expected = {c['id'] for c in criteria}
     rows = result.get('criteria') if isinstance(result,dict) else None
@@ -119,7 +144,12 @@ def screen_extraction(extraction, criteria, cfg, folder):
         payload={'model':model,'stream':False,'think':cfg.get('think',False),'format':SCHEMA,
                  'options':{'temperature':0,'num_ctx':ctx,'num_predict':output},
                  'messages':[{'role':'system','content':SYSTEM},
-                             {'role':'user','content':json.dumps({'criteria':criteria,'pdf_pages':pages},ensure_ascii=False)}]}
+                             {'role':'user','content':json.dumps({
+                                 'criteria':criteria,
+                                 'pdf_pages':pages,
+                                 'output_schema':SCHEMA,
+                                 'output_instruction':'Return only one JSON object matching output_schema. Do not use Markdown or code fences.'
+                             },ensure_ascii=False)}]}
         request_path=target/f'part_{index}_request.json'
         response_path=target/f'part_{index}_response.json'
         write_json(request_path,payload)
@@ -146,11 +176,11 @@ def screen_extraction(extraction, criteria, cfg, folder):
             )
 
         try:
-            parsed = json.loads(content)
-        except (TypeError, ValueError):
+            parsed = parse_structured_content(content)
+        except ValueError as exc:
             response_path.replace(target/f'part_{index}_invalid.json')
             raise ValueError(
-                f'Ollama part {index}: model did not return valid JSON.'
+                f'Ollama part {index}: {exc}'
             ) from None
 
         try:
