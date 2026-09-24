@@ -103,87 +103,107 @@ def _build_date_filter(
     return ",".join(filters)
 
 
-def search_openalex(
-    query: str,
-    max_results: int = 25,
-    mailto: str | None = None,
-    from_publication_date: str | None = None,
-    to_publication_date: str | None = None,
-    sleep_seconds: float = 1.0,
-) -> List[Dict]:
-    filters = _build_date_filter(
-        from_publication_date=from_publication_date,
-        to_publication_date=to_publication_date,
+def _normalise(item, query):
+    ids = item.get("ids", {}) or {}
+
+    doi = _get_external_id(ids, "doi")
+    openalex_id = item.get("id", "") or ""
+
+    title = clean_text(item.get("title", ""))
+    abstract = clean_text(
+        _invert_abstract_index(item.get("abstract_inverted_index"))
     )
 
-    params = {
-        "search": query,
-        "per-page": max_results,
-        "sort": "publication_date:desc",
-        "filter": filters,
+    authors = _extract_authors(item)
+
+    venue, venue_type = _extract_best_venue(item)
+
+    paper = {
+        "paper_id": f"openalex:{openalex_id}",
+        "source": "openalex",
+        "title": title,
+        "authors": authors,
+        "year": item.get("publication_year", None),
+        "published_date": item.get("publication_date", ""),
+        "updated_date": item.get("updated_date", ""),
+        "venue": venue,
+        "venue_type": venue_type,
+        "abstract": abstract,
+        "has_abstract": bool(abstract),
+        "url": doi or openalex_id,
+        "doi": doi,
+        "arxiv_id": "",
+        "semantic_scholar_id": "",
+        "openalex_id": openalex_id,
+        "query": query,
+        "citation_count": item.get("cited_by_count", 0),
+        "is_repository": venue_type == "repository",
+        "openalex_type": item.get("type", ""),
+        "openalex_crossref_type": item.get("type_crossref", ""),
     }
 
+    return paper
+
+
+def iter_openalex_pages(query, max_results=None, mailto=None,
+                        from_publication_date=None, to_publication_date=None,
+                        sleep_seconds=1.0, page_size=100, timeout=30, max_retries=3,
+                        session=None):
+    import os
+    from sources._api_common import get_json, validate, batch
+    validate(query, max_results, page_size, 100, None, None, sleep_seconds, timeout, max_retries)
+    filters = _build_date_filter(from_publication_date, to_publication_date)
+    params = {'search': query, 'per-page': page_size, 'cursor': '*',
+              'sort': 'publication_date:desc', 'filter': filters}
     if mailto:
-        params["mailto"] = mailto
+        params['mailto'] = mailto
+    client = session or requests.Session()
+    seen_ids, seen_cursors = set(), {'*'}
+    retrieved, total = 0, None
+    try:
+        while True:
+            params['per-page'] = page_size if max_results is None else min(page_size, max_results - retrieved)
+            request_params = dict(params)
+            if os.getenv('OPENALEX_API_KEY'):
+                request_params['api_key'] = os.environ['OPENALEX_API_KEY']
+            data = get_json(client, OPENALEX_API_URL, params=request_params,
+                            headers={'Accept':'application/json'}, timeout=timeout,
+                            max_retries=max_retries, source='OpenAlex')
+            reported = data.get('meta', {}).get('count')
+            if not isinstance(reported, int) or reported < 0:
+                raise RuntimeError('OpenAlex: missing result count.')
+            if total is not None and reported != total:
+                raise RuntimeError('OpenAlex: result count changed; rerun the search.')
+            total = reported
+            entries = data.get('results')
+            if not isinstance(entries, list) or len(entries) > params['per-page']:
+                raise RuntimeError('OpenAlex: invalid result page.')
+            papers = [_normalise(item, query) for item in entries]
+            for paper in papers:
+                if not paper['openalex_id'] or paper['paper_id'] in seen_ids:
+                    raise RuntimeError('OpenAlex: missing/repeated identifier.')
+                seen_ids.add(paper['paper_id'])
+            retrieved += len(papers)
+            page = batch('openalex', query, params, data, papers, total, retrieved, max_results)
+            cursor = data.get('meta', {}).get('next_cursor')
+            if page['stop_reason'] == 'more_pages' and (not entries or not cursor or cursor in seen_cursors):
+                raise RuntimeError('OpenAlex: pagination ended early or repeated its cursor.')
+            yield page
+            if page['stop_reason'] != 'more_pages':
+                return
+            seen_cursors.add(cursor)
+            params['cursor'] = cursor
+            time.sleep(sleep_seconds)
+    finally:
+        if session is None:
+            client.close()
 
-    response = requests.get(
-        OPENALEX_API_URL,
-        params=params,
-        timeout=30,
-    )
 
-    response.raise_for_status()
-
-    data = response.json()
-    results = data.get("results", []) or []
-
+def search_openalex(query, max_results=None, **kwargs):
+    import warnings
     papers = []
-
-    for item in results:
-        ids = item.get("ids", {}) or {}
-
-        doi = _get_external_id(ids, "doi")
-        openalex_id = item.get("id", "") or ""
-
-        title = clean_text(item.get("title", ""))
-        abstract = clean_text(
-            _invert_abstract_index(item.get("abstract_inverted_index"))
-        )
-
-        authors = _extract_authors(item)
-
-        venue, venue_type = _extract_best_venue(item)
-
-        paper = {
-            "paper_id": f"openalex:{openalex_id}",
-            "source": "openalex",
-            "title": title,
-            "authors": authors,
-            "year": item.get("publication_year", None),
-            "published_date": item.get("publication_date", ""),
-            "updated_date": item.get("updated_date", ""),
-            "venue": venue,
-            "venue_type": venue_type,
-            "abstract": abstract,
-            "has_abstract": bool(abstract),
-            "url": doi or openalex_id,
-            "doi": doi,
-            "arxiv_id": "",
-            "semantic_scholar_id": "",
-            "openalex_id": openalex_id,
-            "query": query,
-            "citation_count": item.get("cited_by_count", 0),
-            "is_repository": venue_type == "repository",
-            "openalex_type": item.get("type", ""),
-            "openalex_crossref_type": item.get("type_crossref", ""),
-        }
-
-        papers.append(paper)
-
-    print(f"OpenAlex query: {query}")
-    print(f"Date filter: {filters}")
-    print(f"Entries found: {len(papers)}")
-
-    time.sleep(sleep_seconds)
-
+    for page in iter_openalex_pages(query, max_results=max_results, **kwargs):
+        papers.extend(page['papers'])
+        if not page['complete'] and page['stop_reason'] != 'more_pages':
+            warnings.warn('OpenAlex search capped; retrieval is incomplete.', stacklevel=2)
     return papers

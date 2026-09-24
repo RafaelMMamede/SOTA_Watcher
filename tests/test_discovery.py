@@ -12,8 +12,8 @@ class DiscoveryTests(unittest.TestCase):
     def adapters(self, stack):
         mocks = {}
         for name in ('openalex', 'arxiv', 'ieee', 'scopus'):
-            mock = stack.enter_context(patch(f'sources.discovery.search_{name}', autospec=True))
-            mock.return_value = [{'paper_id': name, 'title': 'Example', 'query': 'q'}]
+            mock = stack.enter_context(patch(f'sources.discovery.iter_{name}_pages', autospec=True))
+            mock.return_value = [{'papers':[{'paper_id':name,'title':'Example','query':'q'}], 'complete':True, 'stop_reason':'exhausted', 'total_results':1}]
             mocks[name] = mock
         return mocks
 
@@ -22,7 +22,7 @@ class DiscoveryTests(unittest.TestCase):
             mocks = self.adapters(stack)
             rows = fetch_papers({}, {'topics': {'topic': {'queries': ['deepfake']}}})
             self.assertEqual(rows[0]['search_topic'], 'topic')
-            mocks['openalex'].assert_called_once_with(query='deepfake', max_results=25)
+            mocks['openalex'].assert_called_once_with(query='deepfake', max_results=None)
             for name in ('arxiv', 'ieee', 'scopus'):
                 mocks[name].assert_not_called()
 
@@ -50,7 +50,7 @@ class DiscoveryTests(unittest.TestCase):
         bad_configs = [{'sources': ['typo']}, {'sources': ['openalex', 'scopus']},
                        {'sources': 'arxiv'}, {'sources': ['arxiv', 'arxiv']},
                        {'source_options': {'openalex': {'view': 'STANDARD'}}},
-                       {'max_results_per_query': 201}]
+                       {'max_results_per_query': 0}]
         with ExitStack() as stack:
             mocks = self.adapters(stack)
             for config in bad_configs:
@@ -73,28 +73,3 @@ class DiscoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'Service unavailable'):
                 fetch_papers({}, {'topics': {'t': {'queries': ['q']}}})
 
-    @patch('sources.arxiv_source.time.sleep')
-    @patch('sources.arxiv_source._fetch_arxiv_feed')
-    def test_arxiv_native_date_query_and_metadata(self, fetch, sleep):
-        fetch.return_value = feedparser.parse('''<feed xmlns="http://www.w3.org/2005/Atom">
-        <entry><id>https://arxiv.org/abs/2609.10002v1</id><title>Example</title>
-        <summary>Abstract</summary><published>2026-09-01T00:00:00Z</published></entry></feed>''')
-        rows = search_arxiv('ti:deepfake OR abs:adversarial', native_query=True,
-                            from_publication_date='2026-01-01', to_publication_date='2026-09-24')
-        query = parse_qs(urlparse(fetch.call_args.args[0]).query)['search_query'][0]
-        self.assertEqual(query, '(ti:deepfake OR abs:adversarial) AND submittedDate:[202601010000 TO 202609242359]')
-        self.assertTrue(rows[0]['has_abstract'])
-        self.assertEqual(rows[0]['openalex_type'], 'preprint')
-        self.assertTrue(rows[0]['is_repository'])
-
-    @patch('sources.arxiv_source.time.sleep')
-    @patch('sources.arxiv_source._fetch_arxiv_feed')
-    def test_arxiv_plain_query_compatibility(self, fetch, sleep):
-        fetch.return_value = feedparser.parse('<feed xmlns="http://www.w3.org/2005/Atom"/>')
-        search_arxiv('deepfake adversarial')
-        query = parse_qs(urlparse(fetch.call_args.args[0]).query)['search_query'][0]
-        self.assertEqual(query, 'all:deepfake AND all:adversarial')
-
-
-if __name__ == '__main__':
-    unittest.main()

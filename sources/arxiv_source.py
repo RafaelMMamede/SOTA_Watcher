@@ -258,7 +258,7 @@ def _record_to_paper(
 
     metadata = record.find("oai:metadata/arxivraw:arXivRaw", NS)
     if metadata is None:
-        return None
+        raise RuntimeError("arXiv: missing arXivRaw metadata.")
 
     arxiv_id = clean_text(metadata.findtext("arxivraw:id", default="", namespaces=NS))
     title = clean_text(metadata.findtext("arxivraw:title", default="", namespaces=NS))
@@ -267,7 +267,7 @@ def _record_to_paper(
     doi = clean_text(metadata.findtext("arxivraw:doi", default="", namespaces=NS))
 
     if not arxiv_id:
-        return None
+        raise RuntimeError("arXiv: record missing identifier.")
 
     versions: list[tuple[int, date]] = []
     for version in metadata.findall("arxivraw:version", NS):
@@ -279,8 +279,8 @@ def _record_to_paper(
         if match and version_date:
             versions.append((int(match.group(1)), version_date))
 
-    if not versions:
-        return None
+    if not versions or not any(v[0] == 1 for v in versions):
+        raise RuntimeError("arXiv: v1 submission date missing; cannot filter reliably.")
 
     versions.sort(key=lambda item: item[0])
     created_date = versions[0][1]
@@ -312,145 +312,101 @@ def _record_to_paper(
         "doi": doi,
         "arxiv_id": arxiv_id,
         "query": query,
+        "oai_datestamp": header.findtext("oai:datestamp", default="", namespaces=NS),
+        "arxiv_version": versions[-1][0],
+        "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}v{versions[-1][0]}",
     }
 
 
-def search_arxiv(
-    query: str,
-    max_results: int = 25,
-    sort_by: str = "submittedDate",
-    sort_order: str = "descending",
-    sleep_seconds: float = 3.0,
-    native_query: bool = False,
-    from_publication_date: str | None = None,
-    to_publication_date: str | None = None,
-    oai_from_date: str | None = None,
-    oai_until_date: str | None = None,
-) -> List[Dict]:
+def iter_arxiv_pages(query, max_results=None, sleep_seconds=3.0, native_query=False,
+                     from_publication_date=None, to_publication_date=None,
+                     oai_from_date=None, oai_until_date=None, max_pages=None,
+                     timeout=60, max_retries=5):
+    """Exhaust a modification window; filter original v1 submission dates locally.
+
+    A historical search defaults its harvest end to today, never the publication
+    end. Explicit OAI dates select an update window, not a historical census.
     """
-    Discover arXiv records through OAI-PMH and apply the query locally.\n\n    OAI-PMH from/until filters record modification datestamps, not original\n    submission dates. arXivRaw version history is used to recover the v1\n    submission date and the most recent version date.
-
-    This is a good fit for recurring monitoring. Historical publication-date
-    backfills can be incomplete if a record was modified after the requested
-    publication window.
-    """
-    del native_query  # Kept for compatibility; Boolean forms are parsed locally.
-
-    lower = _parse_iso_date(from_publication_date, "from_publication_date")
-    upper = _parse_iso_date(to_publication_date, "to_publication_date")
-    if lower and upper and lower > upper:
-        raise ValueError("from_publication_date must not exceed to_publication_date.")
-
-    harvest_lower = _parse_iso_date(
-        oai_from_date or from_publication_date,
-        "oai_from_date",
-    )
-    harvest_upper = _parse_iso_date(
-        oai_until_date or to_publication_date,
-        "oai_until_date",
-    )
-    if harvest_lower and harvest_upper and harvest_lower > harvest_upper:
-        raise ValueError("oai_from_date must not exceed oai_until_date.")
-
+    del native_query
+    if not query.strip() or '*' in query or re.search(r'\b(?!all:|ti:|abs:)\w+:', query):
+        raise ValueError('OAI queries support all/ti/abs, phrases, AND/OR/ANDNOT; no wildcards or other fields.')
+    _matches_query('', '', query)  # Validate before requesting any page.
+    if max_results is not None and (isinstance(max_results, bool) or not isinstance(max_results, int) or max_results < 1):
+        raise ValueError('max_results must be positive or null.')
+    if max_pages is not None and (isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages < 1):
+        raise ValueError('max_pages must be positive or null.')
+    if sleep_seconds < 3 or timeout <= 0 or max_retries < 1:
+        raise ValueError('arXiv requires sleep_seconds >= 3, positive timeout and attempts.')
+    lower = _parse_iso_date(from_publication_date, 'from_publication_date')
+    upper = _parse_iso_date(to_publication_date, 'to_publication_date')
+    harvest_lower = _parse_iso_date(oai_from_date or from_publication_date, 'oai_from_date')
+    harvest_upper = _parse_iso_date(oai_until_date, 'oai_until_date') or date.today()
     if harvest_lower is None:
-        raise ValueError(
-            "arXiv OAI-PMH requires from_publication_date or "
-            "source_options.arxiv.oai_from_date to avoid unintentionally "
-            "harvesting the entire repository."
-        )
-
-    if (
-        (from_publication_date or to_publication_date)
-        and oai_from_date is None
-        and oai_until_date is None
-    ):
-        warnings.warn(
-            "arXiv now uses OAI-PMH discovery. Its from/until window is based "
-            "on record modification dates, while published_date is filtered "
-            "locally using the original <created> date. Historical backfills "
-            "may therefore be incomplete for papers modified outside the "
-            "requested window.",
-            stacklevel=2,
-        )
-
-    print("\nOriginal query:", query)
-    print("arXiv backend: OAI-PMH")
-    print(
-        "OAI harvest window:",
-        harvest_lower.isoformat(),
-        "to",
-        harvest_upper.isoformat() if harvest_upper else "latest",
-    )
-
-    initial_params = {
-        "verb": "ListRecords",
-        "metadataPrefix": "arXivRaw",
-        "from": harvest_lower.isoformat(),
-    }
-    if harvest_upper:
-        initial_params["until"] = harvest_upper.isoformat()
-
-    papers: list[Dict] = []
-    params = initial_params
-
+        raise ValueError('Specify from_publication_date or oai_from_date.')
+    if (lower and upper and lower > upper) or harvest_lower > harvest_upper:
+        raise ValueError('Invalid publication or OAI date range.')
+    historical_scope = bool(lower and harvest_lower <= lower and harvest_upper >= date.today())
+    params = {'verb':'ListRecords', 'metadataPrefix':'arXivRaw',
+              'from':harvest_lower.isoformat(), 'until':harvest_upper.isoformat()}
+    retrieved = scanned = 0
+    tokens, identifiers = set(), set()
+    page_number = 0
     while True:
-        root = _request_oai(params, sleep_seconds=sleep_seconds)
-
-        error = root.find("oai:error", NS)
-        if error is not None:
-            code = error.get("code", "unknown")
-            message = clean_text(error.text or "")
-            if code == "noRecordsMatch":
-                break
-            raise RuntimeError(f"arXiv OAI-PMH error {code}: {message}")
-
-        records = root.findall("oai:ListRecords/oai:record", NS)
-
+        root = _request_oai(params, timeout=timeout, max_retries=max_retries, sleep_seconds=sleep_seconds)
+        if root.tag != f'{{{OAI_NS}}}OAI-PMH':
+            raise RuntimeError('arXiv: response is not OAI-PMH.')
+        error = root.find('oai:error', NS)
+        if error is not None and error.get('code') != 'noRecordsMatch':
+            raise RuntimeError(f"arXiv OAI error: {error.get('code')}")
+        listing = root.find('oai:ListRecords', NS)
+        if listing is None and error is None:
+            raise RuntimeError('arXiv: missing ListRecords response.')
+        records = root.findall('oai:ListRecords/oai:record', NS)
+        token = clean_text(root.findtext('oai:ListRecords/oai:resumptionToken', default='', namespaces=NS))
+        if token and token in tokens:
+            raise RuntimeError('arXiv: repeated resumption token.')
+        papers, deleted = [], []
+        consumed = 0
         for record in records:
-            paper = _record_to_paper(
-                record,
-                query=query,
-                lower_publication_date=lower,
-                upper_publication_date=upper,
-            )
+            consumed += 1
+            scanned += 1
+            header = record.find('oai:header', NS)
+            identifier = header.findtext('oai:identifier', default='', namespaces=NS) if header is not None else ''
+            if not identifier or identifier in identifiers:
+                raise RuntimeError('arXiv: missing/repeated OAI identifier.')
+            identifiers.add(identifier)
+            if header.get('status') == 'deleted':
+                deleted.append({'identifier':identifier, 'datestamp':header.findtext('oai:datestamp', default='', namespaces=NS)})
+                continue
+            paper = _record_to_paper(record, query=query, lower_publication_date=lower, upper_publication_date=upper)
             if paper is not None:
                 papers.append(paper)
-                if len(papers) >= max_results:
+                retrieved += 1
+                if max_results is not None and retrieved >= max_results:
                     break
-
-        if len(papers) >= max_results:
-            break
-
-        token_element = root.find(
-            "oai:ListRecords/oai:resumptionToken",
-            NS,
-        )
-        resumption_token = (
-            clean_text(token_element.text or "")
-            if token_element is not None
-            else ""
-        )
-
-        if not resumption_token:
-            break
-
+        page_number += 1
+        exhausted = not token and consumed == len(records)
+        capped = max_results is not None and retrieved >= max_results and not exhausted
+        page_capped = max_pages is not None and page_number >= max_pages and not exhausted
+        stop = 'exhausted' if exhausted else 'max_results' if capped else 'max_pages' if page_capped else 'more_pages'
+        yield {'source':'arxiv', 'query':query, 'request_params':dict(params), 'papers':papers,
+               'raw_response':ET.tostring(root, encoding='unicode'),
+               'total_results':None, 'retrieved_count':retrieved, 'scanned_records':scanned,
+               'complete':exhausted, 'stop_reason':stop, 'deleted_records':deleted,
+               'historical_scope_complete':historical_scope and exhausted,
+               'coverage_scope':'historical_publication_window' if historical_scope else 'oai_update_window',
+               'harvest_until':harvest_upper.isoformat()}
+        if stop != 'more_pages':
+            return
+        tokens.add(token)
         time.sleep(sleep_seconds)
-        params = {
-            "verb": "ListRecords",
-            "resumptionToken": resumption_token,
-        }
+        params = {'verb':'ListRecords', 'resumptionToken':token}
 
-    reverse = sort_order.lower() != "ascending"
-    if sort_by == "lastUpdatedDate":
-        papers.sort(
-            key=lambda paper: paper.get("updated_date", ""),
-            reverse=reverse,
-        )
-    else:
-        papers.sort(
-            key=lambda paper: paper.get("published_date", ""),
-            reverse=reverse,
-        )
 
-    time.sleep(sleep_seconds)
-    return papers[:max_results]
+def search_arxiv(query, max_results=None, **kwargs):
+    papers = []
+    for page in iter_arxiv_pages(query, max_results=max_results, **kwargs):
+        papers.extend(page['papers'])
+        if not page['complete'] and page['stop_reason'] != 'more_pages':
+            warnings.warn('arXiv harvest capped; retrieval is incomplete.', stacklevel=2)
+    return papers

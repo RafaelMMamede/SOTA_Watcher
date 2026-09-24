@@ -8,8 +8,8 @@ import warnings
 from utils.discovery_log import utc_now
 from utils.protocol import queries_for, validate_protocol
 
-from sources.openalex_source import search_openalex
-from sources.arxiv_source import search_arxiv
+from sources.openalex_source import search_openalex, iter_openalex_pages
+from sources.arxiv_source import search_arxiv, iter_arxiv_pages
 from sources.ieee_source import search_ieee, iter_ieee_pages
 from sources.scopus_source import search_scopus, iter_scopus_pages
 
@@ -37,7 +37,7 @@ def fetch_papers(config: dict, search_terms: dict, *, audit=None) -> list[dict]:
     validate_protocol(search_terms)
     adapters = {"openalex": search_openalex, "arxiv": search_arxiv,
                 "ieee": search_ieee, "scopus": search_scopus}
-    signatures = {"openalex": search_openalex, "arxiv": search_arxiv,
+    signatures = {"openalex": iter_openalex_pages, "arxiv": iter_arxiv_pages,
                   "ieee": iter_ieee_pages, "scopus": iter_scopus_pages}
     enabled = config.get("sources", ["openalex"])
     if not isinstance(enabled, list) or not enabled or any(not isinstance(s, str) or s not in adapters for s in enabled):
@@ -55,7 +55,7 @@ def fetch_papers(config: dict, search_terms: dict, *, audit=None) -> list[dict]:
         allowed = set(inspect.signature(signatures[source]).parameters) - {"query", "session", "api_key", "insttoken"}
         if set(options) - allowed:
             raise ValueError(f"Unsupported options for {source}: {sorted(set(options) - allowed)}. Set credentials in environment variables.")
-        kwargs = {"max_results": config.get("max_results_per_query", 25)}
+        kwargs = {"max_results": config.get("max_results_per_query")}
         if source == "openalex":
             kwargs.update({k: config[k] for k in ("mailto", "from_publication_date", "to_publication_date", "sleep_seconds") if k in config})
         elif source == "arxiv":
@@ -73,56 +73,54 @@ def fetch_papers(config: dict, search_terms: dict, *, audit=None) -> list[dict]:
         cap = kwargs["max_results"]
         if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or cap < 1):
             raise ValueError(f"{source}: max_results must be a positive integer.")
-        if source in {"openalex", "arxiv"} and cap is None:
-            raise ValueError(f"{source}: a finite max_results is required.")
-        if source == "openalex" and cap > 200:
-            raise ValueError("OpenAlex adapter currently supports at most 200 results per query.")
         plan.append((source, kwargs, get_queries_from_search_terms(search_terms, source)))
 
     if audit:
         audit.snapshot('search_plan', [{'source': source, 'options': kwargs,
                         'queries': [{'topic': topic, 'query': query} for topic, query in queries]}
                        for source, kwargs, queries in plan])
-    papers = []
+    papers, outcomes = [], []
     query_number = 0
     for source, kwargs, queries in plan:
+        if not queries:
+            outcomes.append({'source':source, 'status':'skipped', 'complete':False,
+                             'reason':'No queries configured for enabled source.'})
         for topic, query in queries:
             query_number += 1
-            context = {'query_id': str(query_number), 'source': source,
-                       'search_topic': topic, 'query': query}
+            context = {'query_id':str(query_number), 'source':source, 'search_topic':topic, 'query':query}
             print(f"\nSearching {source} [{topic}]: {query}")
             if audit:
                 audit.event('query_started', **context, options=kwargs)
-            coverage = 'not_verified'
+            results, last = [], None
             try:
-                if audit and source in {'ieee', 'scopus'}:
-                    iterator = iter_ieee_pages if source == 'ieee' else iter_scopus_pages
-                    results = []
-                    for page_number, page in enumerate(iterator(query=query, **kwargs), 1):
-                        rows = [{**paper, 'search_topic': topic, 'retrieved_at': utc_now(),
-                                 'run_id': audit.run_id, 'query_id': str(query_number)}
-                                for paper in page['papers']]
-                        audit.event('query_page', **context, page_number=page_number,
-                                    request_params=page['request_params'],
-                                    total_results=page['total_results'], complete=page['complete'],
-                                    stop_reason=page['stop_reason'], records=rows)
-                        results.extend(rows)
-                        coverage = 'exhausted' if page['complete'] else page['stop_reason']
-                        if page['stop_reason'] == 'max_results':
-                            warnings.warn(f"{source}: search capped at {len(results)} of {page['total_results']} matches.", stacklevel=2)
-                else:
-                    results = adapters[source](query=query, **kwargs)
+                for page_number, page in enumerate(signatures[source](query=query, **kwargs), 1):
+                    rows = [{**paper, 'search_topic':topic, 'retrieved_at':utc_now(),
+                             **({'run_id':audit.run_id, 'query_id':str(query_number)} if audit else {})}
+                            for paper in page['papers']]
+                    details = {k:v for k,v in page.items() if k not in {'papers', 'raw_response', 'source', 'query'}}
+                    if audit:
+                        audit.event('query_page', **context, page_number=page_number, **details, records=rows)
+                        if config.get('save_raw_responses', True) and 'raw_response' in page:
+                            audit.snapshot(f'raw_{query_number}_{page_number}', page['raw_response'])
+                    results.extend(rows)
+                    last = details
+                if last is None:
+                    raise RuntimeError(f'{source}: no completion record returned.')
             except BaseException as exc:
+                outcomes.append({**context, 'status':'failed', 'complete':False,
+                                 'retrieved_count':len(results), 'error_type':type(exc).__name__})
                 if audit:
-                    audit.event('query_failed', **context, error_type=type(exc).__name__)
+                    audit.event('query_failed', **outcomes[-1])
+                    audit.snapshot('retrieval_summary', outcomes)
                 raise
-            timestamp = utc_now()
-            results = [{**paper, 'search_topic': topic, 'retrieved_at': paper.get('retrieved_at', timestamp),
-                        **({'run_id': audit.run_id, 'query_id': str(query_number)} if audit else {})}
-                       for paper in results]
+            outcome = {**context, **last, 'retrieved_count':len(results),
+                       'status':'complete' if last['complete'] else 'incomplete'}
+            outcomes.append(outcome)
+            if not last['complete']:
+                warnings.warn(f"{source}: incomplete search ({last['stop_reason']}); {len(results)} records retrieved.", stacklevel=2)
             if audit:
-                audit.event('query_succeeded', **context, retrieved_count=len(results),
-                            cap_reached=kwargs['max_results'] is not None and len(results) >= kwargs['max_results'],
-                            coverage=coverage, records=results)
+                audit.event('query_succeeded', **outcome)
             papers.extend(results)
+    if audit:
+        audit.snapshot('retrieval_summary', outcomes)
     return papers

@@ -16,12 +16,12 @@ class ArchiveTests(unittest.TestCase):
     def test_later_failure_preserves_prior_query_and_zero_results(self):
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaises(RuntimeError), DiscoveryLog(folder) as audit:
-                with patch('sources.discovery.search_openalex', autospec=True) as search:
-                    search.side_effect = [[{'title':'Saved'}], [], RuntimeError('secret-url')]
+                with patch('sources.discovery.iter_openalex_pages', autospec=True) as search:
+                    search.side_effect = [[{'papers':[{'title':'Saved'}], 'complete':True, 'stop_reason':'exhausted'}], [{'papers':[], 'complete':True, 'stop_reason':'exhausted'}], RuntimeError('secret-url')]
                     fetch_papers({}, {'topics': {'t': {'queries': ['a', 'b', 'c']}}}, audit=audit)
             events = self.events(audit)
             successes = [e for e in events if e['event'] == 'query_succeeded']
-            self.assertEqual(successes[0]['records'][0]['title'], 'Saved')
+            self.assertEqual(next(e for e in events if e['event']=='query_page')['records'][0]['title'], 'Saved')
             self.assertEqual(successes[1]['retrieved_count'], 0)
             self.assertEqual(events[-1]['event'], 'run_failed')
             self.assertNotIn('secret-url', (audit.path / 'events.jsonl').read_text())
@@ -41,11 +41,11 @@ class ArchiveTests(unittest.TestCase):
 
     def test_excluded_paper_is_archived_before_filtering(self):
         with tempfile.TemporaryDirectory() as folder, DiscoveryLog(folder) as audit:
-            with patch('sources.discovery.search_openalex', autospec=True, return_value=[{'title':'Unrelated', 'paper_id':'x'}]):
-                run_pipeline({'min_triage_score':100}, {'topics':{'t':{'queries':['q']}}}, audit)
+            with patch('sources.discovery.iter_openalex_pages', autospec=True, return_value=[{'papers':[{'title':'Unrelated', 'paper_id':'x'}], 'complete':True, 'stop_reason':'exhausted'}]):
+                run_pipeline({'min_triage_score':100, 'sota_table_path':str(Path(folder)/'test.xlsx')}, {'topics':{'t':{'queries':['q']}}}, audit)
             self.assertEqual(len(json.loads((audit.path / 'discovered.json').read_text())), 1)
             row = json.loads((audit.path / 'screening.json').read_text())[0]
-            self.assertEqual(row['screening_reason'], 'below_min_triage_score')
+            self.assertEqual(row['eligibility_status'], 'not_screened')
             self.assertNotIn('screening_status', json.loads((audit.path / 'discovered.json').read_text())[0])
 
     def test_run_directories_are_unique(self):
