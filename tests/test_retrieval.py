@@ -98,6 +98,7 @@ class RetrievalTests(unittest.TestCase):
         serialized = json.dumps(oqo)
         self.assertIn("title_and_abstract.search", serialized)
         self.assertIn("title_and_abstract.search.exact", serialized)
+        self.assertIn('"\\\"face forgery\\\""', serialized)
         self.assertNotIn("fulltext.search", serialized)
 
         date_filters = [
