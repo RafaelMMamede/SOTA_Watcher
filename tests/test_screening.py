@@ -132,18 +132,23 @@ class ScreeningTests(unittest.TestCase):
             self.assertEqual(sent_pages,PAGES)
     @patch('screening.ollama.requests.post')
     @patch('screening.ollama.requests.get')
-    def test_incomplete_generation_reports_budget(self,get,post):
+    def test_fallback_length_reports_budget_when_split_disabled(self,get,post):
         get.return_value.json.return_value={
             'models':[{'name':'qwen3.5:9b','digest':'abc'}]
         }
-        post.return_value=Mock(
-            json=lambda:{
+        post.side_effect=[
+            Mock(json=lambda:{
+                'done':True,
+                'done_reason':'stop',
+                'message':{'content':'not json'},
+            }),
+            Mock(json=lambda:{
                 'done':True,
                 'done_reason':'length',
-                'eval_count':2048,
+                'eval_count':8192,
                 'message':{'content':'{'},
-            }
-        )
+            }),
+        ]
         extraction={
             'status':'extracted',
             'empty_pages':[],
@@ -153,27 +158,26 @@ class ScreeningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaisesRegex(
                 ValueError,
-                "done_reason='length'.*num_predict=2048",
+                "Reasoning fallback exhausted num_predict=8192.*done_reason='length'",
             ):
                 screen_extraction(
                     extraction,
                     CRITERIA,
-                    {'num_predict':2048},
+                    {'max_split_depth':0},
                     folder,
                 )
 
     @patch('screening.ollama.requests.post')
     @patch('screening.ollama.requests.get')
-    def test_truncated_primary_can_be_repaired_without_thinking(self,get,post):
+    def test_fast_primary_then_reasoning_fallback(self,get,post):
         get.return_value.json.return_value={
             'models':[{'name':'qwen3.5:9b','digest':'abc'}]
         }
         post.side_effect=[
             Mock(json=lambda:{
                 'done':True,
-                'done_reason':'length',
-                'eval_count':8192,
-                'message':{'content':'{'},
+                'done_reason':'stop',
+                'message':{'content':'not json'},
             }),
             Mock(json=lambda:{
                 'done':True,
@@ -189,26 +193,24 @@ class ScreeningTests(unittest.TestCase):
             'pdf_sha256':'hash',
         }
         with tempfile.TemporaryDirectory() as folder:
-            screened=screen_extraction(
-                extraction,
-                CRITERIA,
-                {'think':'low','num_predict':8192},
-                folder,
-            )
+            screened=screen_extraction(extraction,CRITERIA,{},folder)
 
         self.assertEqual(screened['eligibility_decision'],'include')
         self.assertEqual(post.call_count,2)
-        repair_payload=post.call_args_list[1].kwargs['json']
-        self.assertFalse(repair_payload['think'])
-        self.assertNotIn('format',repair_payload)
-        self.assertEqual(
-            repair_payload['options']['num_predict'],
-            2048,
-        )
+
+        fast_payload=post.call_args_list[0].kwargs['json']
+        self.assertFalse(fast_payload['think'])
+        self.assertNotIn('format',fast_payload)
+        self.assertEqual(fast_payload['options']['num_predict'],2048)
+
+        fallback_payload=post.call_args_list[1].kwargs['json']
+        self.assertEqual(fallback_payload['think'],'low')
+        self.assertIn('format',fallback_payload)
+        self.assertEqual(fallback_payload['options']['num_predict'],8192)
 
     @patch('screening.ollama.requests.post')
     @patch('screening.ollama.requests.get')
-    def test_bad_primary_evidence_can_be_repaired(self,get,post):
+    def test_bad_fast_evidence_uses_reasoning_fallback(self,get,post):
         get.return_value.json.return_value={
             'models':[{'name':'qwen3.5:9b','digest':'abc'}]
         }
@@ -236,6 +238,63 @@ class ScreeningTests(unittest.TestCase):
 
         self.assertEqual(screened['eligibility_decision'],'include')
         self.assertEqual(post.call_count,2)
+
+    @patch('screening.ollama.requests.post')
+    @patch('screening.ollama.requests.get')
+    def test_fallback_length_adaptively_splits_multi_page_part(self,get,post):
+        get.return_value.json.return_value={
+            'models':[{'name':'qwen3.5:9b','digest':'abc'}]
+        }
+        post.side_effect=[
+            Mock(json=lambda:{
+                'done':True,
+                'done_reason':'stop',
+                'message':{'content':'not json'},
+            }),
+            Mock(json=lambda:{
+                'done':True,
+                'done_reason':'length',
+                'eval_count':8192,
+                'message':{'content':'{'},
+            }),
+            Mock(json=lambda:{
+                'done':True,
+                'done_reason':'stop',
+                'message':{'content':json.dumps(result())},
+            }),
+            Mock(json=lambda:{
+                'done':True,
+                'done_reason':'stop',
+                'message':{
+                    'content':json.dumps(
+                        result(2,'The evaluation uses images.')
+                    )
+                },
+            }),
+        ]
+        extraction={
+            'status':'extracted',
+            'empty_pages':[],
+            'pages':PAGES,
+            'pdf_sha256':'hash',
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            screened=screen_extraction(extraction,CRITERIA,{},folder)
+
+        self.assertEqual(screened['eligibility_decision'],'include')
+        self.assertEqual(screened['screening_initial_parts'],1)
+        self.assertEqual(screened['screening_parts'],2)
+        self.assertEqual(screened['screening_adaptive_splits'],1)
+        self.assertEqual(post.call_count,4)
+
+        first_child=json.loads(
+            post.call_args_list[2].kwargs['json']['messages'][1]['content']
+        )['pdf_pages']
+        second_child=json.loads(
+            post.call_args_list[3].kwargs['json']['messages'][1]['content']
+        )['pdf_pages']
+        self.assertEqual(first_child,[PAGES[0]])
+        self.assertEqual(second_child,[PAGES[1]])
 
     @patch('screening.ollama.requests.post')
     def test_empty_extraction_never_calls_model(self,post):
