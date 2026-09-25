@@ -300,57 +300,62 @@ class CorpusStore:
                 (corpus_id, key, _json(payload)),
             )
 
-    def upsert_paper(self, paper: dict) -> str:
-        """Merge a record and all known aliases, returning its stable corpus ID."""
+    def _upsert_paper_locked(self, paper: dict) -> str:
         incoming = dict(paper)
-        with self.transaction():
-            matched = self._matching_ids(incoming)
-            if matched:
-                corpus_id = matched[0]
-                if len(matched) > 1:
-                    self._merge_ids(corpus_id, matched[1:])
-                existing = self._load_metadata(corpus_id)
-                merged = deduplicate_papers([existing, incoming])[0] if existing else incoming
-            else:
-                corpus_id = "p_" + uuid.uuid4().hex
-                merged = incoming
+        matched = self._matching_ids(incoming)
+        if matched:
+            corpus_id = matched[0]
+            if len(matched) > 1:
+                self._merge_ids(corpus_id, matched[1:])
+            existing = self._load_metadata(corpus_id)
+            merged = deduplicate_papers([existing, incoming])[0] if existing else incoming
+        else:
+            corpus_id = "p_" + uuid.uuid4().hex
+            merged = incoming
 
-            metadata = _metadata_only(merged)
-            metadata["corpus_id"] = corpus_id
-            timestamp = utc_now()
+        metadata = _metadata_only(merged)
+        metadata["corpus_id"] = corpus_id
+        timestamp = utc_now()
+        self.conn.execute(
+            """INSERT INTO papers(corpus_id, metadata_json, created_at, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(corpus_id) DO UPDATE SET
+                 metadata_json=excluded.metadata_json,
+                 updated_at=excluded.updated_at""",
+            (corpus_id, _json(metadata), timestamp, timestamp),
+        )
+
+        for alias in sorted(identifiers(merged) | identifiers(incoming)):
+            existing_alias = self.conn.execute(
+                "SELECT corpus_id FROM aliases WHERE alias_key=?", (alias,)
+            ).fetchone()
+            if existing_alias and existing_alias["corpus_id"] != corpus_id:
+                self._merge_ids(corpus_id, [existing_alias["corpus_id"]])
             self.conn.execute(
-                """INSERT INTO papers(corpus_id, metadata_json, created_at, updated_at)
-                   VALUES (?, ?, ?, ?)
-                   ON CONFLICT(corpus_id) DO UPDATE SET
-                     metadata_json=excluded.metadata_json,
-                     updated_at=excluded.updated_at""",
-                (corpus_id, _json(metadata), timestamp, timestamp),
+                "INSERT OR REPLACE INTO aliases(alias_key, corpus_id) VALUES (?, ?)",
+                (alias, corpus_id),
             )
 
-            for alias in sorted(identifiers(merged) | identifiers(incoming)):
-                existing_alias = self.conn.execute(
-                    "SELECT corpus_id FROM aliases WHERE alias_key=?", (alias,)
-                ).fetchone()
-                if existing_alias and existing_alias["corpus_id"] != corpus_id:
-                    self._merge_ids(corpus_id, [existing_alias["corpus_id"]])
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO aliases(alias_key, corpus_id) VALUES (?, ?)",
-                    (alias, corpus_id),
-                )
-
-            self._insert_provenance(corpus_id, incoming)
-            if any(present(incoming.get(field)) for field in HUMAN_FIELDS):
-                self.set_human_review(
-                    corpus_id,
-                    incoming.get("manual_decision", ""),
-                    incoming.get("manual_reason", ""),
-                    incoming.get("notes", ""),
-                    commit=False,
-                )
-            if _processing_bundle(incoming):
-                self.update_processing(corpus_id, incoming, commit=False)
+        self._insert_provenance(corpus_id, incoming)
+        if any(present(incoming.get(field)) for field in HUMAN_FIELDS):
+            self.set_human_review(
+                corpus_id,
+                incoming.get("manual_decision", ""),
+                incoming.get("manual_reason", ""),
+                incoming.get("notes", ""),
+                commit=False,
+            )
+        if _processing_bundle(incoming):
+            self.update_processing(corpus_id, incoming, commit=False)
 
         return corpus_id
+
+    def upsert_paper(self, paper: dict, *, commit: bool = True) -> str:
+        """Merge a record and all known aliases, returning its stable corpus ID."""
+        if commit:
+            with self.transaction():
+                return self._upsert_paper_locked(paper)
+        return self._upsert_paper_locked(paper)
 
     def set_human_review(
         self,
@@ -449,6 +454,162 @@ class CorpusStore:
             )
         ]
         return [self.get_paper(corpus_id) for corpus_id in ids]
+
+    def begin_discovery_run(self, config_payload: dict, *, resume: bool = True) -> str:
+        config_hash = hashlib.sha256(_json(config_payload).encode()).hexdigest()
+        if resume:
+            row = self.conn.execute(
+                """SELECT run_id FROM discovery_runs
+                   WHERE config_hash=? AND status IN ('running','incomplete')
+                   ORDER BY started_at DESC LIMIT 1""",
+                (config_hash,),
+            ).fetchone()
+            if row:
+                self.conn.execute(
+                    "UPDATE discovery_runs SET status='running', updated_at=? WHERE run_id=?",
+                    (utc_now(), row["run_id"]),
+                )
+                self.conn.commit()
+                return row["run_id"]
+
+        run_id = "d_" + uuid.uuid4().hex
+        now = utc_now()
+        self.conn.execute(
+            """INSERT INTO discovery_runs
+               (run_id, config_hash, config_json, status, started_at, updated_at)
+               VALUES (?, ?, ?, 'running', ?, ?)""",
+            (run_id, config_hash, _json(config_payload), now, now),
+        )
+        self.conn.commit()
+        return run_id
+
+    def ensure_discovery_task(
+        self,
+        run_id: str,
+        source: str,
+        search_topic: str,
+        query: str,
+        partition_key: str,
+        config_payload: dict,
+    ) -> dict:
+        config_hash = hashlib.sha256(_json(config_payload).encode()).hexdigest()
+        task_seed = _json({
+            "run_id": run_id,
+            "source": source,
+            "search_topic": search_topic,
+            "query": query,
+            "partition_key": partition_key,
+            "config_hash": config_hash,
+        })
+        task_id = "t_" + hashlib.sha256(task_seed.encode()).hexdigest()[:24]
+        now = utc_now()
+        self.conn.execute(
+            """INSERT OR IGNORE INTO discovery_tasks
+               (task_id, run_id, source, search_topic, query, partition_key,
+                config_hash, status, checkpoint_json, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', '{}', ?)""",
+            (
+                task_id, run_id, source, search_topic, query,
+                partition_key, config_hash, now,
+            ),
+        )
+        self.conn.commit()
+        return self.get_discovery_task(task_id)
+
+    def get_discovery_task(self, task_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM discovery_tasks WHERE task_id=?",
+            (task_id,),
+        ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["checkpoint"] = json.loads(data.pop("checkpoint_json") or "{}")
+        return data
+
+    def reset_discovery_task(self, task_id: str):
+        self.conn.execute(
+            """UPDATE discovery_tasks
+               SET status='pending', checkpoint_json='{}',
+                   pages_committed=0, records_committed=0,
+                   error_type='', error_message='', updated_at=?
+               WHERE task_id=?""",
+            (utc_now(), task_id),
+        )
+        self.conn.commit()
+
+    def commit_discovery_page(
+        self,
+        task_id: str,
+        papers: list[dict],
+        checkpoint: dict,
+        *,
+        complete: bool,
+    ):
+        """Atomically merge one page and advance its restart checkpoint."""
+        with self.transaction():
+            for paper in papers:
+                self.upsert_paper(paper, commit=False)
+            self.conn.execute(
+                """UPDATE discovery_tasks
+                   SET status=?, checkpoint_json=?,
+                       pages_committed=pages_committed+1,
+                       records_committed=records_committed+?,
+                       error_type='', error_message='', updated_at=?
+                   WHERE task_id=?""",
+                (
+                    "complete" if complete else "running",
+                    _json(checkpoint or {}),
+                    len(papers),
+                    utc_now(),
+                    task_id,
+                ),
+            )
+
+    def mark_discovery_task_error(self, task_id: str, exc: Exception):
+        self.conn.execute(
+            """UPDATE discovery_tasks
+               SET status='error', error_type=?, error_message=?, updated_at=?
+               WHERE task_id=?""",
+            (type(exc).__name__, str(exc), utc_now(), task_id),
+        )
+        self.conn.commit()
+
+    def finish_discovery_run(self, run_id: str):
+        rows = self.conn.execute(
+            "SELECT status FROM discovery_tasks WHERE run_id=?",
+            (run_id,),
+        ).fetchall()
+        statuses = [row["status"] for row in rows]
+        status = (
+            "complete"
+            if statuses and all(value == "complete" for value in statuses)
+            else "incomplete"
+        )
+        completed = utc_now() if status == "complete" else None
+        self.conn.execute(
+            """UPDATE discovery_runs
+               SET status=?, updated_at=?, completed_at=?
+               WHERE run_id=?""",
+            (status, utc_now(), completed, run_id),
+        )
+        self.conn.commit()
+        return status
+
+    def discovery_status(self) -> dict:
+        task_counts = {
+            row["status"]: row["count"]
+            for row in self.conn.execute(
+                "SELECT status, COUNT(*) AS count FROM discovery_tasks GROUP BY status"
+            )
+        }
+        run_counts = {
+            row["status"]: row["count"]
+            for row in self.conn.execute(
+                "SELECT status, COUNT(*) AS count FROM discovery_runs GROUP BY status"
+            )
+        }
+        return {"runs": run_counts, "tasks": task_counts}
 
     def import_workbook(self, path: str | Path) -> int:
         frame = load_existing_table(str(path))
