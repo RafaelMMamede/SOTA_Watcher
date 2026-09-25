@@ -48,6 +48,20 @@ def _freeze_config(config):
     return frozen
 
 
+def _retrieval_protocol(protocol):
+    if protocol.get("schema_version") == 2:
+        return {
+            "schema_version": 2,
+            "review": deepcopy(protocol.get("review", {})),
+            "searches": deepcopy(protocol.get("searches", [])),
+        }
+    return {
+        key: deepcopy(value)
+        for key, value in protocol.items()
+        if key != "eligibility"
+    }
+
+
 def _discovery_resume_identity(config, protocol):
     keys = (
         "sources",
@@ -64,7 +78,7 @@ def _discovery_resume_identity(config, protocol):
             for key in keys
             if key in config
         },
-        "search_protocol": protocol,
+        "search_protocol": _retrieval_protocol(protocol),
     }
 
 
@@ -365,14 +379,15 @@ def _run_scopus_partitioned(
 
 def discover_restartable(store, config, protocol, *, resume=True):
     """Run every source independently; persist successes even if others fail."""
-    resume_identity = _discovery_resume_identity(config, protocol)
+    retrieval_protocol = _retrieval_protocol(protocol)
+    resume_identity = _discovery_resume_identity(config, retrieval_protocol)
     frozen = _freeze_config(config)
-    plan = build_search_plan(frozen, protocol)
+    plan = build_search_plan(frozen, retrieval_protocol)
     payload = {
         "frozen_on": date.today().isoformat(),
         "frozen_config": frozen,
         "plan": _plan_payload(plan),
-        "search_protocol": protocol,
+        "search_protocol": retrieval_protocol,
     }
     run_id = store.begin_discovery_run(
         payload,
