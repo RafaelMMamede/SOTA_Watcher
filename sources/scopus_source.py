@@ -262,7 +262,7 @@ def iter_scopus_pages(
     locally_excluded = int(resume.get("locally_excluded", 0))
     cap_trimmed = int(resume.get("cap_trimmed", 0))
     total = resume.get("total")
-    seen_ids: set[str] = set(resume.get("seen_ids", []))
+    seen_ids: set[str] = set()
     fallback_used = bool(resume.get("fallback_used", False))
 
     try:
@@ -482,7 +482,6 @@ def iter_scopus_pages(
                     "locally_excluded": locally_excluded,
                     "cap_trimmed": cap_trimmed,
                     "total": total,
-                    "seen_ids": sorted(seen_ids),
                     "fallback_used": fallback_used,
                 },
             }
