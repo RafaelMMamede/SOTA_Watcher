@@ -168,6 +168,14 @@ class CorpusStore:
                 record_json TEXT NOT NULL,
                 PRIMARY KEY (harvest_key, arxiv_id)
             );
+            CREATE TABLE IF NOT EXISTS arxiv_harvest_pages (
+                harvest_key TEXT NOT NULL REFERENCES arxiv_harvests(harvest_key) ON DELETE CASCADE,
+                page_number INTEGER NOT NULL,
+                page_json TEXT NOT NULL,
+                raw_response TEXT NOT NULL DEFAULT '',
+                committed_at TEXT NOT NULL,
+                PRIMARY KEY (harvest_key, page_number)
+            );
             """
         )
         self.conn.commit()
@@ -724,10 +732,18 @@ class CorpusStore:
         checkpoint: dict,
         *,
         status: str,
+        page_payload: dict | None = None,
+        raw_response=None,
     ):
         if status not in {"running", "complete", "incomplete"}:
             raise ValueError("Invalid arXiv harvest status.")
         with self.transaction():
+            page_number = self.conn.execute(
+                """SELECT COUNT(*) AS count FROM arxiv_harvest_pages
+                   WHERE harvest_key=?""",
+                (harvest_key,),
+            ).fetchone()["count"] + 1
+
             for record in records:
                 arxiv_id = record.get("arxiv_id")
                 if not arxiv_id:
@@ -740,6 +756,23 @@ class CorpusStore:
                        DO UPDATE SET record_json=excluded.record_json""",
                     (harvest_key, arxiv_id, _json(record)),
                 )
+
+            self.conn.execute(
+                """INSERT INTO arxiv_harvest_pages
+                   (harvest_key, page_number, page_json, raw_response, committed_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    harvest_key,
+                    page_number,
+                    _json(page_payload or {}),
+                    (
+                        raw_response
+                        if isinstance(raw_response, str)
+                        else _json(raw_response) if raw_response is not None else ""
+                    ),
+                    utc_now(),
+                ),
+            )
             self.conn.execute(
                 """UPDATE arxiv_harvests
                    SET status=?, checkpoint_json=?, updated_at=?
@@ -749,6 +782,10 @@ class CorpusStore:
 
     def reset_arxiv_harvest(self, harvest_key: str):
         with self.transaction():
+            self.conn.execute(
+                "DELETE FROM arxiv_harvest_pages WHERE harvest_key=?",
+                (harvest_key,),
+            )
             self.conn.execute(
                 "DELETE FROM arxiv_records WHERE harvest_key=?",
                 (harvest_key,),
