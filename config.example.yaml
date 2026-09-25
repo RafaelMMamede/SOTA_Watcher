@@ -26,6 +26,8 @@ source_options:
     # For recurring UPDATE monitoring only, explicitly set oai_from_date and
     # oai_until_date. Do not substitute publication cutoffs for these fields.
 output_dir: output
+# SQLite is the authoritative working state; Excel is import/export/review UI.
+corpus_db_path: output/sota_corpus.sqlite3
 sota_table_path: output/sota_table.xlsx
 discovery_log_dir: output/discovery_runs
 save_raw_responses: true
