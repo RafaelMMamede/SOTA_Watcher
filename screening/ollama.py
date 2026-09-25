@@ -287,10 +287,22 @@ def screen_extraction(extraction, criteria, cfg, folder):
     # Backward-compatible configuration:
     # - repair_num_predict becomes the fast no-thinking primary budget.
     # - num_predict remains the low-thinking structured fallback budget.
-    fallback_output = cfg.get('num_predict', 8192)
-    fast_output = cfg.get('repair_num_predict', 2048)
-    fallback_enabled = cfg.get('repair_invalid_output', True)
-    fallback_think = cfg.get('think', 'low')
+    fallback_output = cfg.get(
+        'fallback_num_predict',
+        cfg.get('num_predict', 8192),
+    )
+    fast_output = cfg.get(
+        'fast_num_predict',
+        cfg.get('repair_num_predict', 2048),
+    )
+    fallback_enabled = cfg.get(
+        'fallback_enabled',
+        cfg.get('repair_invalid_output', True),
+    )
+    fallback_think = cfg.get(
+        'fallback_think',
+        cfg.get('think', 'low'),
+    )
     max_split_depth = cfg.get('max_split_depth', 6)
 
     if ctx <= fallback_output + 4096 or fallback_output < 1:
