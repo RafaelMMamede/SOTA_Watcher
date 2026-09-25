@@ -19,6 +19,44 @@ IEEE requires an approved key; Scopus STANDARD may omit abstracts. Set
 OPENALEX_API_KEY if required by your access tier. Credentials are excluded from
 archives and `.env` is ignored by Git. Never put keys in query text or tracked YAML.
 
+## Persistent workflow
+
+SQLite is the authoritative working state (`corpus_db_path`, default
+`output/sota_corpus.sqlite3`). Excel remains the human review/export interface and
+PDF/JSON artifacts remain the screening evidence. Discovery and screening are
+independently restartable:
+
+```bash
+# One-time migration of an existing reviewed workbook.
+python sota_watcher.py import-workbook output/sota_table.xlsx
+
+# Retrieve and persist candidates. Re-running with --resume continues unfinished
+# source/query/date partitions and skips completed work.
+python sota_watcher.py discover --resume
+
+# Inspect discovery, screening, full-text and human-review state.
+python sota_watcher.py status
+
+# Process only the next 100 papers that actually require screening.
+python sota_watcher.py screen --limit 100
+
+# Retry only prior failures/unavailable full text when desired.
+python sota_watcher.py screen --limit 100 --retry error
+python sota_watcher.py screen --limit 100 --retry fulltext_unavailable
+
+# Pull human edits from the existing workbook, then export current SQLite state.
+python sota_watcher.py export
+```
+
+Each candidate receives a stable internal `corpus_id`. DOI, arXiv, OpenAlex,
+Scopus and provider IDs are aliases, so later identifier enrichment does not move
+the paper's artifact directory or reset its human decision. Discovery merges new
+provenance into the corpus before screening applicability is evaluated.
+
+Running `python sota_watcher.py` with no subcommand still executes the former
+single-run workflow for compatibility. Use the subcommands above for unattended
+or production work.
+
 ## Define the review protocol
 
 The version-2 search YAML separates `review`, `searches` and `eligibility`.
@@ -65,29 +103,35 @@ with migration instructions rather than returning obsolete labels.
 ## Discovery
 
 ```bash
-python sota_watcher.py
+python sota_watcher.py discover --resume
 ```
 
-First use `max_results_per_query: 3`, `screening.enabled: false`, and a separate
-`sota_table_path` for a smoke test. An arXiv OAI smoke test should use a recent
-explicit `oai_from_date`/`oai_until_date` and `max_pages: 1`; this is an incomplete
-update-window test, not a historical search. Then remove caps for production.
+The persistent runner freezes the effective search configuration/dates for a run
+and tracks completion separately for each source, search-family query and date
+partition. Each provider page, its normalized candidate records, raw response and
+the checkpoint for the **next** request are committed in one SQLite transaction.
+A crash therefore either commits both the page and checkpoint or neither.
 
-`max_results_per_query: null` follows pagination to exhaustion. Per-source
-`max_results` overrides the global cap. OpenAlex uses cursor pagination with
-pages up to 100. Scopus prefers cursor pagination. If cursor access is rejected,
-`pagination_mode: auto` falls back to offset paging using the configurable
-`offset_page_size` (default 25) rather than assuming the account accepts the
-documented STANDARD maximum of 200. Offset fallback explicitly retains the
-5,000-source-record limit. Result totals changing mid-pagination or repeated
-records/cursors cause failures rather than silent partial success. IEEE retains
-its documented paging limits. Source access/rate limits still apply.
+OpenAlex and Scopus resume from saved cursors; IEEE resumes from its saved offset.
+If a saved cursor has expired, only that affected partition is restarted and
+already merged candidates remain deduplicated in the corpus. A provider failure
+marks that task/run incomplete but does not discard successful pages or stop other
+providers from producing usable candidates. `--resume` retries unfinished/error
+tasks and skips completed tasks whose frozen configuration still matches.
+
+First use `max_results_per_query: 3` for a smoke test; caps are explicitly
+incomplete. Remove them for the production search. `max_results_per_query: null`
+exhausts configured searches.
 
 OpenAlex searches title and abstract only and applies exact publication-date
-bounds. IEEE uses inclusive publication years and warns about the coarser precision.
-Scopus uses provider-side year bounds as a prefilter, then enforces the exact
-configured YYYY-MM-DD range locally on `prism:coverDate`. Adapter request
-parameters are saved; OpenAlex defaults an omitted upper bound to the day the run starts.
+bounds. IEEE uses inclusive publication years and warns about the coarser
+precision. Scopus uses provider-side year bounds as a prefilter, then enforces the
+exact configured YYYY-MM-DD range locally on `prism:coverDate`. Cursor pagination
+is preferred. If Scopus must fall back to offset pagination and a partition
+exceeds the 5,000-source-record ceiling, that date interval is recursively split
+until each child can be exhausted. If even one day still exceeds the limit, that
+leaf is explicitly recorded as an error/incomplete coverage rather than silently
+truncated.
 
 ### arXiv date semantics
 
@@ -100,8 +144,11 @@ arXiv's web search semantics.
 OAI from/until select **metadata modification dates**. `from_publication_date` and
 `to_publication_date` filter original v1 submission dates recovered from version
 history. For a historical backfill, the harvest starts at the publication lower
-bound and ends today, so older papers updated after the publication cutoff remain
-eligible. This may require a large all-subject harvest for each query.
+bound and ends at the frozen run date, so older papers updated after the
+publication cutoff remain eligible. The OAI metadata window is harvested **once**
+and stored locally; every configured arXiv query is then evaluated against that
+shared collection. Adding or revising a query can reuse an already completed
+matching metadata harvest rather than downloading the same window again.
 
 Explicit `oai_from_date`/`oai_until_date` configure recurring update monitoring;
 records within that update window do not constitute a historical census. Use an
@@ -115,17 +162,31 @@ local harvesting ends. Capped OAI results are in harvest order, not globally ran
 
 ## Full-text screening
 
-Set `screening.enabled: true`, review the eligibility criteria, then ensure your
-configured Ollama model is installed and the server is running. The initial
-model setting is `qwen3.5:9b` with a 32K context. Screening uses a fast-first
-pipeline: a no-thinking 2K primary pass receives the JSON schema in the prompt
-and is checked locally; only invalid fast output is retried with Ollama structured
-output, low thinking, and an 8K fallback generation budget. A single surrounding
-Markdown JSON fence is tolerated before the same strict schema and page-evidence
-validation is applied.
+Review the eligibility criteria and ensure your configured Ollama model is
+installed and the server is running. The standalone `screen` command enables
+screening for its selected batch; `screening.enabled` remains relevant to the
+legacy no-subcommand workflow. The initial model setting is `qwen3.5:9b` with a
+32K context. Screening uses a fast-first pipeline: a no-thinking 2K primary pass
+receives the JSON schema in the prompt and is checked locally; only invalid fast
+output is retried with Ollama structured output, low thinking, and an 8K fallback
+generation budget. A single surrounding Markdown JSON fence is tolerated before
+the same strict schema and page-evidence validation is applied.
 
-All current candidates are processed, up to `max_papers_per_run`; the remainder
-are `deferred` and retained. Full-text acquisition is independent of discovery:
+`python sota_watcher.py screen --limit N` counts only papers that actually require
+processing. Valid completed assessments are skipped, so successive batches advance
+through the backlog instead of repeatedly selecting the first N corpus rows.
+Prior `error` and `fulltext_unavailable` records are not retried automatically;
+use `--retry error` or `--retry fulltext_unavailable` deliberately. Progress is
+written after each paper. Batch output includes completed/error/unavailable counts,
+papers/minute and an estimated remaining time.
+
+A completed screening result is reusable only while its screening signature still
+matches the PDF SHA-256, Ollama model digest, prompt version, inference settings
+and currently applicable eligibility criteria. A changed mapped local PDF,
+`refresh_pdf`/`refresh_resolution`, model/prompt changes, or new discovery
+provenance that changes criterion applicability returns that paper to the queue.
+
+Full-text acquisition is independent of discovery:
 a Scopus/IEEE/OpenAlex record may be screened from a legitimate open repository
 copy. Resolution order is local mapping, arXiv, OpenAlex OA locations, Unpaywall
 DOI lookup, Semantic Scholar `openAccessPdf`, then Crossref metadata links for
@@ -201,58 +262,50 @@ criterion. Human review is still required.
 
 ## Data and reports
 
-Each run creates `output/discovery_runs/<run_id>/`:
+The persistent corpus stores:
 
-- `search_terms.json`, `search_plan.json`: protocol and effective source settings.
-- `events.jsonl`: page records, outcomes, partial progress and screening events.
-- `raw_<query>_<page>.json`: provider JSON or OAI XML (disable with `save_raw_responses: false`).
-- `retrieval_summary.json`: totals, caps, completion/failure, and scope per query.
-- `discovered.json`, `deduplicated.json`, `screening.json`: stage snapshots.
-- `merged_table_before_filter.json`: accumulated table snapshot (no filtering).
-- `review_counts.json`, `review_summary.md`: counts and evidence for this run.
+- canonical candidate metadata plus stable `corpus_id` and external identifier aliases;
+- all source/query/search-family provenance;
+- independent human `manual_decision`, `manual_reason` and `notes`;
+- full-text and screening state/signatures/errors;
+- discovery runs, tasks, page envelopes, raw responses and next-page checkpoints;
+- shared arXiv harvest records/pages; and
+- screening batch throughput/ETA metrics.
 
-Failed retrieval stops the run. Previously received pages stay in the archive;
-later-stage snapshots may not exist. `run_finished` is not evidence of exhaustive
-retrieval: inspect completion and scope fields. A killed process may leave a
-started event without a terminal event. Source completion is independent of
-eligibility decisions, and missing sources are not zero-result searches.
+`python sota_watcher.py status` reports persistent discovery task states,
+screening/full-text counts, retry-required counts, screening error stages, human
+decisions and the last screening batch's rate/ETA.
 
-Excel includes source/query provenance, full-text status, proposed eligibility,
-criterion assessments, page evidence, model/PDF identity, and independent human
-`manual_decision`, `manual_reason`, and `notes`. Human decisions are `include`,
-`exclude` or `uncertain`. Existing human values survive updates. New screening
-replaces the prior assessment as a whole; disabled/deferred screening does not
-wipe an existing assessment. No record is dropped because it is excluded.
+`python sota_watcher.py export` first imports human fields from an existing Excel
+file without importing its stale model/full-text state, then atomically writes the
+current corpus. Use `import-workbook` for the one-time migration when you *do*
+want existing screening/full-text columns loaded into the new database. Human
+decisions remain independent from provisional model decisions.
 
 Structured Excel cells contain JSON; the loader restores them. Oversized cells
-fail explicitly rather than silently truncating; the JSON archive remains intact.
-Excel writes are atomic. Deduplication uses connected normalized identifiers,
-retains conflicts and provenance, and only uses exact title+year when no stronger
-identifier is available. This conservative matching can leave duplicates for
-manual review. Longer text is a completeness heuristic, not a quality guarantee.
+fail explicitly rather than silently truncating. Deduplication uses connected
+normalized identifiers and only falls back to exact title+year when no stronger
+identifier exists. Discovering a new identifier/source match merges into the same
+stable corpus record.
 
-Counts separate raw records, duplicate records, unique candidates, full-text
-statuses, model decisions and human decisions. They are **not a validated PRISMA
-flow** and are not automatically study-level counts. Per-run counts and the
-accumulated table are different populations; do not add overlapping run counts.
-
-Regenerate the accumulated summary after editing human decisions:
-
-```bash
-python summarize_recommended.py
-```
-
-This command retains all decisions, including uncertain/excluded records. It
-replaces the old read/skim-only summary generator.
+The legacy no-subcommand workflow still writes per-run
+`output/discovery_runs/<run_id>/` JSON/event snapshots. Those artifacts remain
+useful for compatibility, but the SQLite page/task state is the authoritative
+restart point for the new subcommand workflow.
 
 ## Verification
 
 ```bash
+python -m py_compile sota_watcher.py screening/queue.py sources/restartable.py sources/arxiv_cache.py utils/corpus_store.py
+python -m unittest tests.test_corpus_store tests.test_restartable_discovery -v
 python -m unittest discover -s tests -q
 ```
 
-Tests use mocked APIs/Ollama plus actual synthetic PDFs and Excel round-trips.
-They do not establish live key entitlements, retrieval recall, or model accuracy.
+Regression tests cover advancing screening batches, stable IDs/workbook migration,
+provenance-triggered re-screening, interrupted discovery resume, provider failure
+isolation, shared arXiv harvesting, and Scopus partitioning. Tests use mocked
+APIs/Ollama plus synthetic PDFs and Excel round-trips; they do not establish live
+key entitlements, retrieval recall, or model accuracy.
 
 References: [OpenAlex paging](https://help.openalex.org/api/paging/),
 [arXiv OAI](https://info.arxiv.org/help/oa/index.html),
