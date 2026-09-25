@@ -313,14 +313,30 @@ def _run_scopus_partitioned(
 
 def discover_restartable(store, config, protocol, *, resume=True):
     """Run every source independently; persist successes even if others fail."""
+    resume_identity = {
+        "discovery_config": config,
+        "search_protocol": protocol,
+    }
     frozen = _freeze_config(config)
     plan = build_search_plan(frozen, protocol)
     payload = {
         "frozen_on": date.today().isoformat(),
+        "frozen_config": frozen,
         "plan": _plan_payload(plan),
         "search_protocol": protocol,
     }
-    run_id = store.begin_discovery_run(payload, resume=resume)
+    run_id = store.begin_discovery_run(
+        payload,
+        resume=resume,
+        match_payload=resume_identity,
+    )
+    saved_run = store.get_discovery_run(run_id)
+    saved_payload = saved_run["config"]
+    if saved_payload != payload:
+        frozen = saved_payload["frozen_config"]
+        protocol = saved_payload["search_protocol"]
+        plan = build_search_plan(frozen, protocol)
+        payload = saved_payload
     results = []
 
     for source, kwargs, queries in plan:
