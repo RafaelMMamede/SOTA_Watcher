@@ -491,6 +491,61 @@ class ScreeningTests(unittest.TestCase):
             papers[0]['eligibility_reason'],
         )
 
+    @patch('screening.pipeline.fetch_pdf')
+    @patch('screening.pipeline.resolve_paper')
+    def test_retry_clears_stale_machine_decision_and_errors(
+        self,
+        resolve,
+        fetch,
+    ):
+        resolve.return_value = {
+            'status':'resolved',
+            'kind':'openalex',
+            'resolver':'openalex',
+        }
+        fetch.return_value = {
+            'status':'unavailable',
+            'reason':'PDF no longer available.',
+        }
+        paper = {
+            'paper_id':'one',
+            'manual_decision':'include',
+            'notes':'keep',
+            'eligibility_decision':'include',
+            'eligibility_status':'screened',
+            'eligibility_reason':'old result',
+            'eligibility_evidence':[{'page':1,'quote':'old'}],
+            'eligibility_criteria':[{'id':'scope'}],
+            'eligibility_error_type':'ValueError',
+            'eligibility_error_stage':'screening',
+            'eligibility_error_message':'old error',
+            'screening_prompt_version':'old',
+            'pdf_sha256':'old-pdf',
+            'fulltext_status':'extracted',
+        }
+
+        with tempfile.TemporaryDirectory() as folder:
+            screen_papers(
+                [paper],
+                {'eligibility':{'criteria':CRITERIA}},
+                {
+                    'screening':{
+                        'enabled':True,
+                        'papers_dir':folder,
+                    },
+                },
+            )
+
+        self.assertEqual(paper['manual_decision'],'include')
+        self.assertEqual(paper['notes'],'keep')
+        self.assertEqual(paper['eligibility_decision'],'uncertain')
+        self.assertEqual(paper['eligibility_status'],'fulltext_unavailable')
+        self.assertEqual(paper['eligibility_evidence'],[])
+        self.assertEqual(paper['eligibility_criteria'],[])
+        self.assertNotIn('eligibility_error_stage',paper)
+        self.assertNotIn('screening_prompt_version',paper)
+        self.assertNotIn('pdf_sha256',paper)
+
     def test_new_screening_replaces_old_bundle_but_not_human(self):
         old={'doi':'10.1/a','manual_decision':'include','notes':'keep',
              'eligibility_decision':'include','eligibility_status':'screened','eligibility_evidence':[{'page':1}]}
