@@ -748,7 +748,17 @@ class CorpusStore:
                 "SELECT status, COUNT(*) AS count FROM discovery_runs GROUP BY status"
             )
         }
-        return {"runs": run_counts, "tasks": task_counts}
+        harvest_counts = {
+            row["status"]: row["count"]
+            for row in self.conn.execute(
+                "SELECT status, COUNT(*) AS count FROM arxiv_harvests GROUP BY status"
+            )
+        }
+        return {
+            "runs": run_counts,
+            "tasks": task_counts,
+            "arxiv_harvests": harvest_counts,
+        }
 
     def ensure_arxiv_harvest(self, config_payload: dict) -> dict:
         config_hash = hashlib.sha256(_json(config_payload).encode()).hexdigest()
