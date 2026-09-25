@@ -97,9 +97,23 @@ class SourcesTest(unittest.TestCase):
                 with self.assertWarns(RuntimeWarning):
                     self.assertEqual(len(search("deepfake", api_key="key", max_results=1, session=self.client(response(data)))), 1)
 
-    def test_scopus_limit_does_not_silently_truncate(self):
+    def test_scopus_offset_limit_does_not_silently_truncate(self):
         with self.assertRaisesRegex(RuntimeError, "5,000"):
-            search_scopus("deepfake", api_key="key", session=self.client(response(scopus_page([1], 5001))))
+            search_scopus(
+                "deepfake",
+                api_key="key",
+                pagination_mode="offset",
+                session=self.client(response(scopus_page([1], 5001))),
+            )
+
+    def test_scopus_cursor_requires_next_cursor_when_results_remain(self):
+        with self.assertRaisesRegex(RuntimeError, "cursor pagination ended early"):
+            search_scopus(
+                "deepfake",
+                api_key="key",
+                pagination_mode="cursor",
+                session=self.client(response(scopus_page([1], 2))),
+            )
 
     def test_repeated_and_premature_empty_pages_fail(self):
         for search, make in [(search_ieee, ieee_page), (search_scopus, scopus_page)]:
