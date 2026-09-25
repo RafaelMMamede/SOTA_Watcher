@@ -653,6 +653,84 @@ class CorpusStore:
         }
         return {"runs": run_counts, "tasks": task_counts}
 
+    def ensure_arxiv_harvest(self, config_payload: dict) -> dict:
+        config_hash = hashlib.sha256(_json(config_payload).encode()).hexdigest()
+        harvest_key = "ah_" + config_hash[:24]
+        now = utc_now()
+        self.conn.execute(
+            """INSERT OR IGNORE INTO arxiv_harvests
+               (harvest_key, config_hash, config_json, status,
+                checkpoint_json, updated_at)
+               VALUES (?, ?, ?, 'pending', '{}', ?)""",
+            (harvest_key, config_hash, _json(config_payload), now),
+        )
+        self.conn.commit()
+        return self.get_arxiv_harvest(harvest_key)
+
+    def get_arxiv_harvest(self, harvest_key: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM arxiv_harvests WHERE harvest_key=?",
+            (harvest_key,),
+        ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["checkpoint"] = json.loads(data.pop("checkpoint_json") or "{}")
+        return data
+
+    def commit_arxiv_harvest_page(
+        self,
+        harvest_key: str,
+        records: list[dict],
+        checkpoint: dict,
+        *,
+        status: str,
+    ):
+        if status not in {"running", "complete", "incomplete"}:
+            raise ValueError("Invalid arXiv harvest status.")
+        with self.transaction():
+            for record in records:
+                arxiv_id = record.get("arxiv_id")
+                if not arxiv_id:
+                    raise ValueError("Cached arXiv record lacks arxiv_id.")
+                self.conn.execute(
+                    """INSERT INTO arxiv_records
+                       (harvest_key, arxiv_id, record_json)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(harvest_key, arxiv_id)
+                       DO UPDATE SET record_json=excluded.record_json""",
+                    (harvest_key, arxiv_id, _json(record)),
+                )
+            self.conn.execute(
+                """UPDATE arxiv_harvests
+                   SET status=?, checkpoint_json=?, updated_at=?
+                   WHERE harvest_key=?""",
+                (status, _json(checkpoint or {}), utc_now(), harvest_key),
+            )
+
+    def reset_arxiv_harvest(self, harvest_key: str):
+        with self.transaction():
+            self.conn.execute(
+                "DELETE FROM arxiv_records WHERE harvest_key=?",
+                (harvest_key,),
+            )
+            self.conn.execute(
+                """UPDATE arxiv_harvests
+                   SET status='pending', checkpoint_json='{}', updated_at=?
+                   WHERE harvest_key=?""",
+                (utc_now(), harvest_key),
+            )
+
+    def arxiv_harvest_records(self, harvest_key: str) -> list[dict]:
+        return [
+            json.loads(row["record_json"])
+            for row in self.conn.execute(
+                """SELECT record_json FROM arxiv_records
+                   WHERE harvest_key=? ORDER BY arxiv_id""",
+                (harvest_key,),
+            )
+        ]
+
     def import_workbook(self, path: str | Path) -> int:
         frame = load_existing_table(str(path))
         for paper in frame.to_dict("records"):
