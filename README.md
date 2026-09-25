@@ -41,8 +41,10 @@ python sota_watcher.py status
 python sota_watcher.py screen --limit 100
 
 # Retry only prior failures/unavailable full text when desired.
-python sota_watcher.py screen --limit 100 --retry error
+python sota_watcher.py screen --limit 100 --retry screening
+python sota_watcher.py screen --limit 100 --retry extraction
 python sota_watcher.py screen --limit 100 --retry fulltext_unavailable
+# "error" remains available as an explicit catch-all for all error stages.
 
 # Pull human edits from the existing workbook, then export current SQLite state.
 python sota_watcher.py export
@@ -106,10 +108,12 @@ with migration instructions rather than returning obsolete labels.
 python sota_watcher.py discover --resume
 ```
 
-The persistent runner freezes the effective search configuration/dates for a run
-and tracks completion separately for each source, search-family query and date
-partition. Each provider page, its normalized candidate records, raw response and
-the checkpoint for the **next** request are committed in one SQLite transaction.
+The persistent runner freezes the effective retrieval configuration/dates for a
+run and tracks completion separately for each source, search-family query and date
+partition. Screening criteria are deliberately excluded from discovery identity,
+so changing eligibility rules does not rerun retrieval. Each provider page, its
+normalized candidate records, raw response and the checkpoint for the **next**
+request are committed in one SQLite transaction.
 A crash therefore either commits both the page and checkpoint or neither.
 
 OpenAlex and Scopus resume from saved cursors; IEEE resumes from its saved offset.
@@ -175,9 +179,11 @@ the same strict schema and page-evidence validation is applied.
 `python sota_watcher.py screen --limit N` counts only papers that actually require
 processing. Valid completed assessments are skipped, so successive batches advance
 through the backlog instead of repeatedly selecting the first N corpus rows.
-Prior `error` and `fulltext_unavailable` records are not retried automatically;
-use `--retry error` or `--retry fulltext_unavailable` deliberately. Progress is
-written after each paper. Batch output includes completed/error/unavailable counts,
+Prior `error` and `fulltext_unavailable` records are not retried automatically.
+Use `--retry screening`, `extraction`, `download`, or `resolution` to target
+one failed stage; `--retry error` is the explicit all-error catch-all, and
+`--retry fulltext_unavailable` rechecks unavailable full text. Progress is written
+after each paper. Batch output includes completed/error/unavailable counts,
 papers/minute and an estimated remaining time.
 
 A completed screening result is reusable only while its screening signature still
@@ -272,9 +278,10 @@ The persistent corpus stores:
 - shared arXiv harvest records/pages; and
 - screening batch throughput/ETA metrics.
 
-`python sota_watcher.py status` reports persistent discovery task states,
-screening/full-text counts, retry-required counts, screening error stages, human
-decisions and the last screening batch's rate/ETA.
+`python sota_watcher.py status` reports persistent discovery run/task/arXiv-harvest
+states, committed page/record totals, screening/full-text counts, retry-required
+counts, screening error stages, human decisions and the last screening batch's
+rate/ETA.
 
 `python sota_watcher.py export` first imports human fields from an existing Excel
 file without importing its stale model/full-text state, then atomically writes the
