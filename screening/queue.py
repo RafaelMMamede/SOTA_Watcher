@@ -154,11 +154,6 @@ def screen_saved_corpus(
         # stable corpus ID for its artifact folder.
         screen_papers([paper], protocol, one_config, audit=audit)
 
-        # Merge any newly discovered identifiers/metadata before saving state.
-        stable_id = store.upsert_paper(paper)
-        if stable_id != corpus_id:
-            corpus_id = stable_id
-
         signature = ""
         if paper.get("pdf_sha256"):
             active_criteria, _, _ = _criteria_for_paper(
@@ -172,8 +167,9 @@ def screen_saved_corpus(
                 model_digest,
             )
 
-        store.update_processing(
-            corpus_id,
+        # Metadata enrichment and the new screening signature/result commit
+        # together, so a crash cannot pair a new result with an old signature.
+        corpus_id = store.save_screened_paper(
             paper,
             screening_signature=signature,
         )
