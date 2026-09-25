@@ -14,6 +14,31 @@ class ProtocolTests(unittest.TestCase):
     def test_invalid_ids(self):
         with self.assertRaises(ValueError):
             validate_protocol({'schema_version':2, 'searches':[{'id':'s','queries':{'typo':['q']}}]})
+
+    def test_criterion_search_topic_scope_is_validated(self):
+        protocol={
+            'schema_version':2,
+            'searches':[
+                {'id':'visual','queries':{'openalex':['q']}},
+                {'id':'adversarial','queries':{'openalex':['r']}},
+            ],
+            'eligibility':{
+                'criteria':[
+                    {
+                        'id':'conditional',
+                        'kind':'exclusion',
+                        'description':'Scoped criterion.',
+                        'applies_to_search_topics':['adversarial'],
+                    },
+                ],
+            },
+        }
+        self.assertIs(validate_protocol(protocol),protocol)
+        protocol['eligibility']['criteria'][0][
+            'applies_to_search_topics'
+        ]=['typo']
+        with self.assertRaisesRegex(ValueError,'unknown applies_to_search_topics'):
+            validate_protocol(protocol)
     def test_manual_precedence(self):
         row=initialize_eligibility({'manual_decision':'include', 'eligibility_decision':'exclude'})
         self.assertEqual(final_decision(row),'include')
