@@ -17,8 +17,12 @@ def result(page=1,quote='We study visual research.',assessment='met'):
 
 
 class ScreeningTests(unittest.TestCase):
-    def test_reject_hallucinated_quote_page_and_missing_criterion(self):
-        for value in (result(9),result(1,'Invented quote'),{'criteria':[]}):
+    def test_reject_hallucinated_quote_and_missing_criterion(self):
+        for value in (
+            result(9,'Invented quote'),
+            result(1,'Invented quote'),
+            {'criteria':[]},
+        ):
             with self.assertRaises(ValueError):
                 validate_result(value,CRITERIA,PAGES)
 
