@@ -299,20 +299,37 @@ class CorpusStore:
             source_processing = self.conn.execute(
                 "SELECT * FROM processing WHERE corpus_id=?", (source,)
             ).fetchone()
-            if source_processing and not target_processing:
+            if source_processing:
                 columns = (
                     "fulltext_status", "pdf_sha256", "screening_status",
                     "screening_signature", "result_json", "error_type",
                     "error_stage", "error_message", "artifact_folder", "updated_at"
                 )
-                self.conn.execute(
-                    """INSERT INTO processing
-                       (corpus_id, fulltext_status, pdf_sha256, screening_status,
-                        screening_signature, result_json, error_type, error_stage,
-                        error_message, artifact_folder, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (target, *(source_processing[col] for col in columns)),
+                use_source = (
+                    target_processing is None
+                    or str(source_processing["updated_at"])
+                    > str(target_processing["updated_at"])
                 )
+                if use_source:
+                    self.conn.execute(
+                        """INSERT INTO processing
+                           (corpus_id, fulltext_status, pdf_sha256, screening_status,
+                            screening_signature, result_json, error_type, error_stage,
+                            error_message, artifact_folder, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           ON CONFLICT(corpus_id) DO UPDATE SET
+                             fulltext_status=excluded.fulltext_status,
+                             pdf_sha256=excluded.pdf_sha256,
+                             screening_status=excluded.screening_status,
+                             screening_signature=excluded.screening_signature,
+                             result_json=excluded.result_json,
+                             error_type=excluded.error_type,
+                             error_stage=excluded.error_stage,
+                             error_message=excluded.error_message,
+                             artifact_folder=excluded.artifact_folder,
+                             updated_at=excluded.updated_at""",
+                        (target, *(source_processing[col] for col in columns)),
+                    )
 
             self.conn.execute("DELETE FROM papers WHERE corpus_id=?", (source,))
 
