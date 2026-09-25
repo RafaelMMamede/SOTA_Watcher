@@ -61,8 +61,17 @@ class SourcesTest(unittest.TestCase):
     def test_scopus_headers_native_query_and_missing_abstract(self):
         client = self.client(response(scopus_page([1], 2)), response(scopus_page([2], 2)))
         query = 'TITLE-ABS-KEY(deepfake AND adversarial)'
-        pages = list(iter_scopus_pages(query, api_key="secret", insttoken="token", page_size=1,
-                                      start_year=2020, end_year=2026, session=client, sleep_seconds=0))
+        pages = list(iter_scopus_pages(
+            query,
+            api_key="secret",
+            insttoken="token",
+            page_size=1,
+            start_year=2020,
+            end_year=2026,
+            pagination_mode="offset",
+            session=client,
+            sleep_seconds=0,
+        ))
         self.assertEqual([c[1]["params"]["start"] for c in client.calls], [0, 1])
         call = client.calls[0][1]
         self.assertEqual(call["headers"]["X-ELS-APIKey"], "secret")
