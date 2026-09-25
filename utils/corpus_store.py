@@ -463,8 +463,16 @@ class CorpusStore:
         ]
         return [self.get_paper(corpus_id) for corpus_id in ids]
 
-    def begin_discovery_run(self, config_payload: dict, *, resume: bool = True) -> str:
-        config_hash = hashlib.sha256(_json(config_payload).encode()).hexdigest()
+    def begin_discovery_run(
+        self,
+        config_payload: dict,
+        *,
+        resume: bool = True,
+        match_payload: dict | None = None,
+    ) -> str:
+        config_hash = hashlib.sha256(
+            _json(match_payload if match_payload is not None else config_payload).encode()
+        ).hexdigest()
         if resume:
             row = self.conn.execute(
                 """SELECT run_id FROM discovery_runs
@@ -490,6 +498,17 @@ class CorpusStore:
         )
         self.conn.commit()
         return run_id
+
+    def get_discovery_run(self, run_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM discovery_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["config"] = json.loads(data.pop("config_json"))
+        return data
 
     def ensure_discovery_task(
         self,
