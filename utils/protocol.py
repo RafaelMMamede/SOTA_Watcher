@@ -33,15 +33,23 @@ def validate_protocol(protocol):
                 or not isinstance(criterion.get('description'), str) or not criterion['description'].strip()):
             raise ValueError('Eligibility criteria require unique id, inclusion/exclusion kind, and description.')
         applies = criterion.get('applies_to_search_topics')
+        skips = criterion.get('skip_if_search_topics')
         if (
             criterion['id'] == 'generative_adversarial_only'
             and 'adversarial_vision' in ids
-            and applies is None
+            and (
+                applies != ['adversarial_vision']
+                or (
+                    'visual_forgery_detection' in ids
+                    and skips != ['visual_forgery_detection']
+                )
+            )
         ):
             raise ValueError(
                 "generative_adversarial_only must declare "
-                "applies_to_search_topics: [adversarial_vision] so GAN-only "
-                "false positives do not exclude visual-forgery candidates."
+                "applies_to_search_topics: [adversarial_vision] and, when the "
+                "visual search exists, skip_if_search_topics: "
+                "[visual_forgery_detection]."
             )
         if applies is not None:
             if (not isinstance(applies, list) or not applies
@@ -55,6 +63,20 @@ def validate_protocol(protocol):
             if unknown:
                 raise ValueError(
                     f"{criterion['id']}: unknown applies_to_search_topics: "
+                    f"{sorted(unknown)}"
+                )
+        if skips is not None:
+            if (not isinstance(skips, list) or not skips
+                    or any(not isinstance(topic, str) or not topic.strip() for topic in skips)
+                    or len(set(skips)) != len(skips)):
+                raise ValueError(
+                    f"{criterion['id']}: skip_if_search_topics must be a "
+                    "nonempty list of unique search ids."
+                )
+            unknown = set(skips) - ids
+            if unknown:
+                raise ValueError(
+                    f"{criterion['id']}: unknown skip_if_search_topics: "
                     f"{sorted(unknown)}"
                 )
         seen.add(criterion['id'])
