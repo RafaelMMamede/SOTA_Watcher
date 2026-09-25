@@ -199,4 +199,5 @@ def screen_saved_corpus(
                 2,
             )
 
+    store.record_screening_batch(summary.__dict__)
     return summary
