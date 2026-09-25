@@ -90,6 +90,16 @@ def screen_papers(papers, protocol, config, audit=None):
             )
             continue
 
+        # This paper is actually being attempted again. Remove only the old
+        # machine-processing bundle so stale decisions/errors cannot survive a
+        # retry. Human review fields and discovery metadata remain independent.
+        for key in list(paper):
+            if key.startswith(
+                ("eligibility_", "screening_", "fulltext_", "pdf_")
+            ):
+                del paper[key]
+        initialize_eligibility(paper)
+
         stable = paper.get("corpus_id")
         if stable:
             folder_name = str(stable)
