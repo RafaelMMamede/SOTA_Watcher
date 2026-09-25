@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from screening.queue import screen_saved_corpus
+from screening.queue import screen_saved_corpus, select_for_screening
 from utils.corpus_store import CorpusStore
 
 
@@ -75,6 +75,84 @@ class CorpusStoreTests(unittest.TestCase):
                     ),
                     4,
                 )
+
+    def test_new_search_family_match_requeues_when_criteria_change(self):
+        scoped_protocol = {
+            'schema_version': 2,
+            'searches': [
+                {'id': 'visual_forgery_detection', 'queries': {'openalex': ['v']}},
+                {'id': 'adversarial_vision', 'queries': {'openalex': ['a']}},
+            ],
+            'eligibility': {
+                'criteria': [
+                    {
+                        'id': 'visual_scope',
+                        'kind': 'inclusion',
+                        'description': 'Visual research.',
+                    },
+                    {
+                        'id': 'gan_only',
+                        'kind': 'exclusion',
+                        'description': 'GAN-only adversarial terminology.',
+                        'applies_to_search_topics': ['adversarial_vision'],
+                        'skip_if_search_topics': ['visual_forgery_detection'],
+                    },
+                ],
+            },
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            with CorpusStore(Path(folder) / 'corpus.sqlite3') as store:
+                store.upsert_paper({
+                    'paper_id': 'openalex:W1',
+                    'openalex_id': 'W1',
+                    'title': 'Paper',
+                    'year': 2026,
+                    'source': 'openalex',
+                    'search_topic': 'adversarial_vision',
+                })
+
+                def fake_screen(papers, protocol, config, audit=None):
+                    papers[0].update({
+                        'eligibility_status': 'screened',
+                        'eligibility_decision': 'include',
+                        'eligibility_reason': 'test',
+                        'eligibility_criteria': [],
+                        'eligibility_evidence': [],
+                        'fulltext_status': 'extracted',
+                        'pdf_sha256': 'stable-pdf',
+                    })
+                    return papers
+
+                cfg = {'screening': {'model': 'qwen3.5:9b'}}
+                with patch('screening.queue.get_model_digest', return_value='model-a'), \
+                     patch('screening.queue.screen_papers', side_effect=fake_screen):
+                    first = screen_saved_corpus(
+                        store,
+                        scoped_protocol,
+                        cfg,
+                        limit=1,
+                    )
+                self.assertEqual(first.completed, 1)
+
+                # Same paper is later discovered through the visual-forgery
+                # family. That makes the conditional exclusion inactive.
+                store.upsert_paper({
+                    'openalex_id': 'W1',
+                    'source': 'openalex',
+                    'search_topic': 'visual_forgery_detection',
+                    'title': 'Paper',
+                    'year': 2026,
+                })
+
+                with patch('screening.queue.get_model_digest', return_value='model-a'):
+                    selected, summary = select_for_screening(
+                        store,
+                        scoped_protocol,
+                        cfg,
+                        limit=1,
+                    )
+                self.assertEqual(len(selected), 1)
+                self.assertEqual(summary.stale, 1)
 
     def test_workbook_import_preserves_human_review(self):
         with tempfile.TemporaryDirectory() as folder:
