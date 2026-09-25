@@ -35,4 +35,5 @@ eligibility:
     - id: generative_adversarial_only
       kind: exclusion
       applies_to_search_topics: [adversarial_vision]
-      description: For adversarial-vision candidates, uses "adversarial" only for generative adversarial networks or generative-model training, without studying adversarial examples, evasion attacks, perturbations, defenses, or robustness.
+      skip_if_search_topics: [visual_forgery_detection]
+      description: For candidates retrieved only through the adversarial-vision family, uses "adversarial" only for generative adversarial networks or generative-model training, without studying adversarial examples, evasion attacks, perturbations, defenses, or robustness.
