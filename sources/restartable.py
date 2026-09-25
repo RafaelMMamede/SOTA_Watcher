@@ -26,10 +26,16 @@ def _json(value):
 
 def _freeze_config(config):
     frozen = deepcopy(config)
-    # A missing upper publication date otherwise means "whatever today is"
-    # when a source executes. Freeze it once per discovery run.
+    today = date.today().isoformat()
+    # Missing effective dates must not drift across a resumed run.
     if not frozen.get("to_publication_date"):
-        frozen["to_publication_date"] = date.today().isoformat()
+        frozen["to_publication_date"] = today
+    if "arxiv" in frozen.get("sources", ["openalex"]):
+        source_options = deepcopy(frozen.get("source_options", {}))
+        arxiv_options = deepcopy(source_options.get("arxiv", {}))
+        arxiv_options.setdefault("oai_until_date", today)
+        source_options["arxiv"] = arxiv_options
+        frozen["source_options"] = source_options
     return frozen
 
 
