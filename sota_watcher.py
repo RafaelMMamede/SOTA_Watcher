@@ -69,14 +69,20 @@ def run_pipeline(config, search_terms, audit):
     print(f"Saved {len(final)} rows to {config['sota_table_path']}")
 
 
-def _load_runtime():
+def _load_runtime_config():
     from dotenv import load_dotenv
     load_dotenv('.env', override=False)
     config = load_config('config.yaml')
-    terms = load_search_terms(config.get('search_terms_path', 'search_terms.yaml'))
-    validate_protocol(terms)
     make_output_dirs(config)
-    return config, terms
+    return config
+
+
+def _load_protocol(config):
+    terms = load_search_terms(
+        config.get('search_terms_path', 'search_terms.yaml')
+    )
+    validate_protocol(terms)
+    return terms
 
 
 def _store_path(config):
@@ -182,10 +188,11 @@ def build_parser():
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    config, terms = _load_runtime()
+    config = _load_runtime_config()
 
     if not argv:
         # Preserve the pre-persistent behavior for existing scripts.
+        terms = _load_protocol(config)
         root = config.get(
             'discovery_log_dir',
             str(config.get('output_dir', 'output')) + '/discovery_runs',
@@ -198,9 +205,9 @@ def main(argv=None):
 
     args = build_parser().parse_args(argv)
     if args.command == 'discover':
-        command_discover(args, config, terms)
+        command_discover(args, config, _load_protocol(config))
     elif args.command == 'screen':
-        command_screen(args, config, terms)
+        command_screen(args, config, _load_protocol(config))
     elif args.command == 'status':
         command_status(config)
     elif args.command == 'export':
