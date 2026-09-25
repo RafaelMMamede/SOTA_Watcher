@@ -33,7 +33,8 @@ def get_queries_from_search_terms(search_terms: dict, source: str = "openalex") 
     return items
 
 
-def fetch_papers(config: dict, search_terms: dict, *, audit=None) -> list[dict]:
+def build_search_plan(config: dict, search_terms: dict):
+    """Validate and return the exact source/query plan used for retrieval."""
     validate_protocol(search_terms)
     adapters = {"openalex": search_openalex, "arxiv": search_arxiv,
                 "ieee": search_ieee, "scopus": search_scopus}
@@ -117,6 +118,12 @@ def fetch_papers(config: dict, search_terms: dict, *, audit=None) -> list[dict]:
             raise ValueError(f"{source}: max_results must be a positive integer.")
 
         plan.append((source, kwargs, get_queries_from_search_terms(search_terms, source)))
+
+    return plan
+
+
+def fetch_papers(config: dict, search_terms: dict, *, audit=None) -> list[dict]:
+    plan = build_search_plan(config, search_terms)
 
     if audit:
         audit.snapshot(
