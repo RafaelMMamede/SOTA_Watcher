@@ -296,6 +296,48 @@ class CorpusStoreTests(unittest.TestCase):
                 self.assertEqual(len(selected), 1)
                 self.assertEqual(summary.stale, 1)
 
+    def test_stage_specific_retry_selects_only_matching_errors(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with CorpusStore(Path(folder) / 'corpus.sqlite3') as store:
+                ids = []
+                for index, stage in enumerate(('screening', 'extraction')):
+                    corpus_id = store.upsert_paper({
+                        'paper_id': f'openalex:E{index}',
+                        'openalex_id': f'E{index}',
+                        'title': f'Error {index}',
+                        'year': 2026,
+                        'source': 'openalex',
+                        'search_topic': 'visual_forgery_detection',
+                    })
+                    paper = store.get_paper(corpus_id)
+                    paper.update({
+                        'eligibility_status': 'error',
+                        'eligibility_decision': 'uncertain',
+                        'eligibility_error_stage': stage,
+                        'eligibility_error_type': 'ValueError',
+                        'eligibility_error_message': 'test',
+                    })
+                    store.update_processing(corpus_id, paper)
+                    ids.append(corpus_id)
+
+                cfg = {'screening': {'model': 'qwen3.5:9b'}}
+                with patch(
+                    'screening.queue.get_model_digest',
+                    return_value='model-a',
+                ):
+                    selected, summary = select_for_screening(
+                        store,
+                        PROTOCOL,
+                        cfg,
+                        retry=['screening'],
+                    )
+
+                self.assertEqual(
+                    [paper['corpus_id'] for paper, _, _ in selected],
+                    [ids[0]],
+                )
+                self.assertEqual(summary.skipped_retry_required, 1)
+
     def test_later_identifier_enrichment_keeps_stable_corpus_id(self):
         with tempfile.TemporaryDirectory() as folder:
             with CorpusStore(Path(folder) / 'corpus.sqlite3') as store:
