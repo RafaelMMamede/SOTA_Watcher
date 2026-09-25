@@ -114,6 +114,20 @@ def _page_metadata(page):
     }
 
 
+def _cursor_error(exc):
+    message = str(exc).casefold()
+    return "cursor" in message and any(
+        token in message
+        for token in (
+            "invalid",
+            "expired",
+            "ended early",
+            "repeated",
+            "rejected",
+        )
+    )
+
+
 def _run_standard_task(
     store,
     *,
@@ -202,7 +216,11 @@ def _run_standard_task(
                 and resume_state.get("mode") == "cursor"
                 and resume_state.get("cursor")
             )
-            if cursor_resume and not restarted_expired_cursor:
+            if (
+                cursor_resume
+                and _cursor_error(exc)
+                and not restarted_expired_cursor
+            ):
                 # Provider cursors may expire after a long interruption.
                 # Restart only this partition; globally merged papers remain.
                 store.reset_discovery_task(task["task_id"])
