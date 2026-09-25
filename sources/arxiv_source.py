@@ -338,6 +338,7 @@ def iter_arxiv_harvest_pages(
     timeout=60,
     max_retries=5,
     resume=None,
+    coverage_mode=None,
 ):
     """Harvest an OAI metadata window once, without applying search queries."""
     if max_pages is not None and (
@@ -382,13 +383,18 @@ def iter_arxiv_harvest_pages(
         }
 
     scanned = int(resume.get('scanned_records', 0))
-    seen_identifiers = set(resume.get('seen_identifiers', []))
     page_number = int(resume.get('pages', 0))
-    historical_scope = bool(
-        lower
-        and harvest_lower <= lower
-        and harvest_upper >= date.today()
-    )
+    if coverage_mode is None:
+        coverage_mode = (
+            'oai_update_window'
+            if oai_from_date or oai_until_date
+            else 'historical_publication_window'
+        )
+    if coverage_mode not in {
+        'historical_publication_window',
+        'oai_update_window',
+    }:
+        raise ValueError('Invalid arXiv coverage_mode.')
 
     while True:
         root = _request_oai(
@@ -421,6 +427,7 @@ def iter_arxiv_harvest_pages(
 
         parsed = []
         deleted = []
+        page_identifiers = set()
         for record in records:
             scanned += 1
             header = record.find('oai:header', NS)
@@ -433,11 +440,11 @@ def iter_arxiv_harvest_pages(
                 if header is not None
                 else ''
             )
-            if not identifier or identifier in seen_identifiers:
+            if not identifier or identifier in page_identifiers:
                 raise RuntimeError(
-                    'arXiv: missing/repeated OAI identifier.'
+                    'arXiv: missing/repeated OAI identifier within page.'
                 )
-            seen_identifiers.add(identifier)
+            page_identifiers.add(identifier)
 
             if header.get('status') == 'deleted':
                 deleted.append({
@@ -473,7 +480,6 @@ def iter_arxiv_harvest_pages(
                 next_token if stop == 'more_pages' else ''
             ),
             'scanned_records': scanned,
-            'seen_identifiers': sorted(seen_identifiers),
             'pages': page_number,
         }
 
@@ -485,11 +491,7 @@ def iter_arxiv_harvest_pages(
             'checkpoint': checkpoint,
             'deleted_records': deleted,
             'scanned_records': scanned,
-            'coverage_scope': (
-                'historical_publication_window'
-                if historical_scope
-                else 'oai_update_window'
-            ),
+            'coverage_scope': coverage_mode,
             'harvest_from': harvest_lower.isoformat(),
             'harvest_until': harvest_upper.isoformat(),
             'publication_from': lower.isoformat() if lower else None,
