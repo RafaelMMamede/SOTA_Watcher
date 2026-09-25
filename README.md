@@ -36,19 +36,24 @@ Eligibility criteria have a unique `id`, `kind` (`inclusion` or `exclusion`) and
 `description`. All inclusion criteria must be met; any met exclusion criterion
 excludes. A criterion may also define `applies_to_search_topics` with one or more
 search IDs. Such a criterion is screened only for candidates retrieved by at least
-one of those search families; criteria without this field are universal. Unknown
-search IDs fail protocol validation. The active and inactive criteria for each
-paper are retained in the screening artifacts/table. Full-text model decisions are
-provisional; human decisions are separate.
+one of those search families; criteria without this field are universal. A
+criterion may also define `skip_if_search_topics`: any matching retrieval family
+makes that criterion inactive. Unknown search IDs fail protocol validation. The
+active and inactive criteria for each paper are retained in the screening
+artifacts/table. Full-text model decisions are provisional; human decisions are
+separate.
 
-For example, a GAN-only false-positive exclusion belongs to the adversarial search
-family rather than the visual-forgery family:
+For example, the review is a union of visual-forgery and adversarial-vision scope.
+A paper retrieved by both routes can still be eligible because of its deepfake
+detection content, so a GAN-only false-positive exclusion is applied only to
+adversarial-only candidates:
 
 ```yaml
 - id: generative_adversarial_only
   kind: exclusion
   applies_to_search_topics: [adversarial_vision]
-  description: For adversarial-vision candidates, uses "adversarial" only for generative adversarial networks or generative-model training, without studying adversarial examples, evasion attacks, perturbations, defenses, or robustness.
+  skip_if_search_topics: [visual_forgery_detection]
+  description: For candidates retrieved only through the adversarial-vision family, uses "adversarial" only for generative adversarial networks or generative-model training, without studying adversarial examples, evasion attacks, perturbations, defenses, or robustness.
 ```
 
 Legacy `topics` YAML still loads with a warning. Weighted topic terms and old
