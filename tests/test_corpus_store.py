@@ -191,6 +191,111 @@ class CorpusStoreTests(unittest.TestCase):
             self.assertEqual(row['manual_reason'], 'Human scope decision')
             self.assertEqual(row['notes'], 'Keep this note')
 
+    def test_human_workbook_sync_does_not_overwrite_newer_screening(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            workbook = folder / 'review.xlsx'
+            import pandas as pd
+            from utils.io import save_table
+
+            with CorpusStore(folder / 'corpus.sqlite3') as store:
+                corpus_id = store.upsert_paper({
+                    'doi': '10.1/current',
+                    'title': 'Current paper',
+                    'year': 2026,
+                })
+                current = store.get_paper(corpus_id)
+                current.update({
+                    'eligibility_status': 'screened',
+                    'eligibility_decision': 'include',
+                    'eligibility_reason': 'new model result',
+                    'fulltext_status': 'extracted',
+                    'pdf_sha256': 'new-pdf',
+                })
+                store.update_processing(
+                    corpus_id,
+                    current,
+                    screening_signature='new-signature',
+                )
+
+                save_table(
+                    pd.DataFrame([{
+                        'corpus_id': corpus_id,
+                        'doi': '10.1/current',
+                        'title': 'Current paper',
+                        'year': 2026,
+                        'eligibility_status': 'screened',
+                        'eligibility_decision': 'exclude',
+                        'eligibility_reason': 'stale workbook result',
+                        'pdf_sha256': 'old-pdf',
+                        'manual_decision': 'exclude',
+                        'manual_reason': 'Human decision',
+                        'notes': 'Edited note',
+                    }]),
+                    str(workbook),
+                )
+
+                store.import_workbook(
+                    workbook,
+                    include_processing=False,
+                )
+                row = store.get_paper(corpus_id)
+
+                self.assertEqual(row['eligibility_decision'], 'include')
+                self.assertEqual(row['pdf_sha256'], 'new-pdf')
+                self.assertEqual(row['screening_signature'], 'new-signature')
+                self.assertEqual(row['manual_decision'], 'exclude')
+                self.assertEqual(row['manual_reason'], 'Human decision')
+                self.assertEqual(row['notes'], 'Edited note')
+
+    def test_model_digest_change_requeues_completed_screening(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with CorpusStore(Path(folder) / 'corpus.sqlite3') as store:
+                corpus_id = store.upsert_paper({
+                    'paper_id': 'openalex:W1',
+                    'openalex_id': 'W1',
+                    'title': 'Paper',
+                    'year': 2026,
+                    'source': 'openalex',
+                    'search_topic': 'visual_forgery_detection',
+                })
+                paper = store.get_paper(corpus_id)
+                paper.update({
+                    'eligibility_status': 'screened',
+                    'eligibility_decision': 'include',
+                    'eligibility_reason': 'test',
+                    'fulltext_status': 'extracted',
+                    'pdf_sha256': 'stable-pdf',
+                })
+
+                from screening.ollama import screening_signature
+                cfg = {'screening': {'model': 'qwen3.5:9b'}}
+                old_signature = screening_signature(
+                    PROTOCOL['eligibility']['criteria'],
+                    cfg['screening'],
+                    'stable-pdf',
+                    'model-a',
+                )
+                store.update_processing(
+                    corpus_id,
+                    paper,
+                    screening_signature=old_signature,
+                )
+
+                with patch(
+                    'screening.queue.get_model_digest',
+                    return_value='model-b',
+                ):
+                    selected, summary = select_for_screening(
+                        store,
+                        PROTOCOL,
+                        cfg,
+                        limit=1,
+                    )
+
+                self.assertEqual(len(selected), 1)
+                self.assertEqual(summary.stale, 1)
+
     def test_later_identifier_enrichment_keeps_stable_corpus_id(self):
         with tempfile.TemporaryDirectory() as folder:
             with CorpusStore(Path(folder) / 'corpus.sqlite3') as store:
