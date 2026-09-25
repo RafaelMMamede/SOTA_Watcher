@@ -245,13 +245,8 @@ def _request_oai(
     raise RuntimeError("arXiv OAI-PMH request failed after retries.")
 
 
-def _record_to_paper(
-    record: ET.Element,
-    *,
-    query: str,
-    lower_publication_date: date | None,
-    upper_publication_date: date | None,
-) -> Dict | None:
+def _record_to_metadata(record: ET.Element) -> Dict | None:
+    """Parse one non-deleted arXivRaw record without applying query/date filters."""
     header = record.find("oai:header", NS)
     if header is None or header.get("status") == "deleted":
         return None
@@ -283,16 +278,8 @@ def _record_to_paper(
         raise RuntimeError("arXiv: v1 submission date missing; cannot filter reliably.")
 
     versions.sort(key=lambda item: item[0])
-    created_date = versions[0][1]
+    created_date = next(value for number, value in versions if number == 1)
     updated_date = versions[-1][1]
-
-    if lower_publication_date and created_date < lower_publication_date:
-        return None
-    if upper_publication_date and created_date > upper_publication_date:
-        return None
-
-    if not _matches_query(title, abstract, query):
-        return None
 
     return {
         "paper_id": f"arxiv:{arxiv_id}",
@@ -311,11 +298,209 @@ def _record_to_paper(
         "url": f"https://arxiv.org/abs/{arxiv_id}",
         "doi": doi,
         "arxiv_id": arxiv_id,
-        "query": query,
         "oai_datestamp": header.findtext("oai:datestamp", default="", namespaces=NS),
         "arxiv_version": versions[-1][0],
         "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}v{versions[-1][0]}",
     }
+
+
+def _record_to_paper(
+    record: ET.Element,
+    *,
+    query: str,
+    lower_publication_date: date | None,
+    upper_publication_date: date | None,
+) -> Dict | None:
+    paper = _record_to_metadata(record)
+    if paper is None:
+        return None
+
+    created_date = date.fromisoformat(paper["published_date"])
+    if lower_publication_date and created_date < lower_publication_date:
+        return None
+    if upper_publication_date and created_date > upper_publication_date:
+        return None
+    if not _matches_query(paper["title"], paper["abstract"], query):
+        return None
+
+    paper["query"] = query
+    return paper
+
+
+def iter_arxiv_harvest_pages(
+    *,
+    from_publication_date=None,
+    to_publication_date=None,
+    oai_from_date=None,
+    oai_until_date=None,
+    max_pages=None,
+    sleep_seconds=3.0,
+    timeout=60,
+    max_retries=5,
+    resume=None,
+):
+    """Harvest an OAI metadata window once, without applying search queries."""
+    if max_pages is not None and (
+        isinstance(max_pages, bool)
+        or not isinstance(max_pages, int)
+        or max_pages < 1
+    ):
+        raise ValueError('max_pages must be positive or null.')
+    if sleep_seconds < 3 or timeout <= 0 or max_retries < 1:
+        raise ValueError(
+            'arXiv requires sleep_seconds >= 3, positive timeout and attempts.'
+        )
+
+    lower = _parse_iso_date(from_publication_date, 'from_publication_date')
+    upper = _parse_iso_date(to_publication_date, 'to_publication_date')
+    harvest_lower = _parse_iso_date(
+        oai_from_date or from_publication_date,
+        'oai_from_date',
+    )
+    harvest_upper = (
+        _parse_iso_date(oai_until_date, 'oai_until_date')
+        or date.today()
+    )
+    if harvest_lower is None:
+        raise ValueError('Specify from_publication_date or oai_from_date.')
+    if (lower and upper and lower > upper) or harvest_lower > harvest_upper:
+        raise ValueError('Invalid publication or OAI date range.')
+
+    resume = resume or {}
+    if not isinstance(resume, dict):
+        raise ValueError('arXiv resume state must be a mapping.')
+
+    token = clean_text(resume.get('resumption_token', ''))
+    if token:
+        params = {'verb': 'ListRecords', 'resumptionToken': token}
+    else:
+        params = {
+            'verb': 'ListRecords',
+            'metadataPrefix': 'arXivRaw',
+            'from': harvest_lower.isoformat(),
+            'until': harvest_upper.isoformat(),
+        }
+
+    scanned = int(resume.get('scanned_records', 0))
+    seen_identifiers = set(resume.get('seen_identifiers', []))
+    page_number = int(resume.get('pages', 0))
+    historical_scope = bool(
+        lower
+        and harvest_lower <= lower
+        and harvest_upper >= date.today()
+    )
+
+    while True:
+        root = _request_oai(
+            params,
+            timeout=timeout,
+            max_retries=max_retries,
+            sleep_seconds=sleep_seconds,
+        )
+        if root.tag != f'{{{OAI_NS}}}OAI-PMH':
+            raise RuntimeError('arXiv: response is not OAI-PMH.')
+
+        error = root.find('oai:error', NS)
+        if error is not None and error.get('code') != 'noRecordsMatch':
+            raise RuntimeError(
+                f"arXiv OAI error: {error.get('code')}"
+            )
+
+        listing = root.find('oai:ListRecords', NS)
+        if listing is None and error is None:
+            raise RuntimeError('arXiv: missing ListRecords response.')
+
+        records = root.findall('oai:ListRecords/oai:record', NS)
+        next_token = clean_text(
+            root.findtext(
+                'oai:ListRecords/oai:resumptionToken',
+                default='',
+                namespaces=NS,
+            )
+        )
+
+        parsed = []
+        deleted = []
+        for record in records:
+            scanned += 1
+            header = record.find('oai:header', NS)
+            identifier = (
+                header.findtext(
+                    'oai:identifier',
+                    default='',
+                    namespaces=NS,
+                )
+                if header is not None
+                else ''
+            )
+            if not identifier or identifier in seen_identifiers:
+                raise RuntimeError(
+                    'arXiv: missing/repeated OAI identifier.'
+                )
+            seen_identifiers.add(identifier)
+
+            if header.get('status') == 'deleted':
+                deleted.append({
+                    'identifier': identifier,
+                    'datestamp': header.findtext(
+                        'oai:datestamp',
+                        default='',
+                        namespaces=NS,
+                    ),
+                })
+                continue
+
+            paper = _record_to_metadata(record)
+            if paper is not None:
+                parsed.append(paper)
+
+        page_number += 1
+        exhausted = not next_token
+        page_capped = (
+            max_pages is not None
+            and page_number >= max_pages
+            and not exhausted
+        )
+        stop = (
+            'exhausted'
+            if exhausted
+            else 'max_pages'
+            if page_capped
+            else 'more_pages'
+        )
+        checkpoint = {
+            'resumption_token': (
+                next_token if stop == 'more_pages' else ''
+            ),
+            'scanned_records': scanned,
+            'seen_identifiers': sorted(seen_identifiers),
+            'pages': page_number,
+        }
+
+        yield {
+            'records': parsed,
+            'raw_response': ET.tostring(root, encoding='unicode'),
+            'complete': exhausted,
+            'stop_reason': stop,
+            'checkpoint': checkpoint,
+            'deleted_records': deleted,
+            'scanned_records': scanned,
+            'coverage_scope': (
+                'historical_publication_window'
+                if historical_scope
+                else 'oai_update_window'
+            ),
+            'harvest_from': harvest_lower.isoformat(),
+            'harvest_until': harvest_upper.isoformat(),
+            'publication_from': lower.isoformat() if lower else None,
+            'publication_until': upper.isoformat() if upper else None,
+        }
+
+        if stop != 'more_pages':
+            return
+
+        params = {'verb': 'ListRecords', 'resumptionToken': next_token}
+        time.sleep(sleep_seconds)
 
 
 def iter_arxiv_pages(query, max_results=None, sleep_seconds=3.0, native_query=False,
