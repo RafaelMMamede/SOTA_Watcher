@@ -160,7 +160,10 @@ def build_parser():
     screen.add_argument(
         '--retry',
         default='',
-        help='Comma-separated retry statuses: error,fulltext_unavailable.',
+        help=(
+            'Comma-separated retries: error, fulltext_unavailable, '
+            'resolution, download, extraction, screening.'
+        ),
     )
 
     sub.add_parser('status', help='Show persistent corpus processing counts.')
