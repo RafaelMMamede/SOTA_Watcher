@@ -4,10 +4,34 @@ from pathlib import Path
 import time
 
 from fulltext import resolve_paper, fetch_pdf, extract_pdf
-from utils.deduplication import get_dedup_key
+from utils.deduplication import decode, get_dedup_key
 from utils.eligibility import initialize_eligibility
 from fulltext._common import read_json, write_json
 from .ollama import screen_extraction
+
+
+def _screening_topics(paper):
+    topics = decode(paper.get("search_topics"), [])
+    if not topics and paper.get("search_topic"):
+        topics = [paper["search_topic"]]
+    return [
+        str(topic).strip()
+        for topic in topics
+        if str(topic).strip()
+    ]
+
+
+def _criteria_for_paper(criteria, paper):
+    topics = set(_screening_topics(paper))
+    active = []
+    inactive = []
+    for criterion in criteria:
+        applies = criterion.get("applies_to_search_topics")
+        if applies is None or topics.intersection(applies):
+            active.append(criterion)
+        else:
+            inactive.append(criterion["id"])
+    return active, inactive, sorted(topics)
 
 
 def _resolution_fields(paper, resolution):
@@ -135,14 +159,23 @@ def screen_papers(papers, protocol, config, audit=None):
                 paper["pdf_sha256"] = extraction["pdf_sha256"]
                 paper["fulltext_status"] = extraction["status"]
                 stage = "screening"
-                paper.update(
-                    screen_extraction(
-                        extraction,
-                        criteria,
-                        cfg,
-                        folder,
-                    )
+                active_criteria, inactive_criteria, screening_topics = (
+                    _criteria_for_paper(criteria, paper)
                 )
+                if not active_criteria:
+                    raise ValueError(
+                        "No eligibility criteria apply to this paper's "
+                        "search-topic provenance."
+                    )
+                screened = screen_extraction(
+                    extraction,
+                    active_criteria,
+                    cfg,
+                    folder,
+                )
+                screened["screening_search_topics"] = screening_topics
+                screened["screening_inactive_criteria"] = inactive_criteria
+                paper.update(screened)
 
         except Exception as exc:
             paper["eligibility_decision"] = "uncertain"
