@@ -39,6 +39,15 @@ def _within_publication_window(paper, lower, upper):
     return True
 
 
+def _resumption_token_error(exc):
+    message = str(exc).casefold()
+    return (
+        "resumption" in message
+        or "badresumptiontoken" in message
+        or ("token" in message and ("invalid" in message or "expired" in message))
+    )
+
+
 def _run_harvest(store, config, *, resume):
     harvest = store.ensure_arxiv_harvest(config)
     if harvest["status"] in {"complete", "incomplete"}:
@@ -82,7 +91,11 @@ def _run_harvest(store, config, *, resume):
                     raise RuntimeError("arXiv harvest returned no completion page.")
             break
         except Exception as exc:
-            if resume_state and not restarted:
+            if (
+                resume_state.get("resumption_token")
+                and _resumption_token_error(exc)
+                and not restarted
+            ):
                 # OAI resumption tokens can expire. Restart only this cached
                 # harvest window; query/corpus state is independently deduped.
                 store.reset_arxiv_harvest(harvest["harvest_key"])
