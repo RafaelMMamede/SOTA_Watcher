@@ -772,8 +772,20 @@ class CorpusStore:
 
     def import_workbook(self, path: str | Path) -> int:
         frame = load_existing_table(str(path))
+        has_human_columns = any(field in frame.columns for field in HUMAN_FIELDS)
         for paper in frame.to_dict("records"):
-            self.upsert_paper(paper)
+            corpus_id = self.upsert_paper(paper)
+            if has_human_columns:
+                values = {}
+                for field in HUMAN_FIELDS:
+                    value = paper.get(field, "")
+                    values[field] = str(value) if present(value) else ""
+                self.set_human_review(
+                    corpus_id,
+                    values["manual_decision"],
+                    values["manual_reason"],
+                    values["notes"],
+                )
         return len(frame)
 
     def export_workbook(self, path: str | Path) -> int:
