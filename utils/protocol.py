@@ -33,6 +33,16 @@ def validate_protocol(protocol):
                 or not isinstance(criterion.get('description'), str) or not criterion['description'].strip()):
             raise ValueError('Eligibility criteria require unique id, inclusion/exclusion kind, and description.')
         applies = criterion.get('applies_to_search_topics')
+        if (
+            criterion['id'] == 'generative_adversarial_only'
+            and 'adversarial_vision' in ids
+            and applies is None
+        ):
+            raise ValueError(
+                "generative_adversarial_only must declare "
+                "applies_to_search_topics: [adversarial_vision] so GAN-only "
+                "false positives do not exclude visual-forgery candidates."
+            )
         if applies is not None:
             if (not isinstance(applies, list) or not applies
                     or any(not isinstance(topic, str) or not topic.strip() for topic in applies)
