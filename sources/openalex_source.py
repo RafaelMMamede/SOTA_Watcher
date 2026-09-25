@@ -280,6 +280,7 @@ def iter_openalex_pages(
     timeout=30,
     max_retries=3,
     session=None,
+    resume=None,
 ):
     import os
 
@@ -302,10 +303,14 @@ def iter_openalex_pages(
         from_publication_date=from_publication_date,
         to_publication_date=to_publication_date,
     )
+    resume = resume or {}
+    if not isinstance(resume, dict):
+        raise ValueError("OpenAlex resume state must be a mapping.")
+
     params = {
         "oql": oql,
         "per-page": page_size,
-        "cursor": "*",
+        "cursor": resume.get("cursor", "*"),
         "sort": "publication_date:desc",
     }
     headers = {"Accept": "application/json"}
@@ -315,8 +320,11 @@ def iter_openalex_pages(
         )
 
     client = session or requests.Session()
-    seen_ids, seen_cursors = set(), {"*"}
-    retrieved, total = 0, None
+    seen_ids = set(resume.get("seen_ids", []))
+    seen_cursors = set(resume.get("seen_cursors", []))
+    seen_cursors.add(params["cursor"])
+    retrieved = int(resume.get("retrieved", 0))
+    total = resume.get("total")
 
     try:
         while True:
@@ -395,6 +403,17 @@ def iter_openalex_pages(
                 raise RuntimeError(
                     "OpenAlex: pagination ended early or repeated its cursor."
                 )
+
+            checkpoint_seen_cursors = set(seen_cursors)
+            if cursor:
+                checkpoint_seen_cursors.add(cursor)
+            page["checkpoint"] = {
+                "cursor": cursor if page["stop_reason"] == "more_pages" else None,
+                "retrieved": retrieved,
+                "total": total,
+                "seen_ids": sorted(seen_ids),
+                "seen_cursors": sorted(checkpoint_seen_cursors),
+            }
 
             yield page
 
