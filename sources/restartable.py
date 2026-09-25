@@ -33,10 +33,39 @@ def _freeze_config(config):
     if "arxiv" in frozen.get("sources", ["openalex"]):
         source_options = deepcopy(frozen.get("source_options", {}))
         arxiv_options = deepcopy(source_options.get("arxiv", {}))
+        explicit_oai_window = bool(
+            arxiv_options.get("oai_from_date")
+            or arxiv_options.get("oai_until_date")
+        )
+        frozen["_arxiv_coverage_mode"] = (
+            "oai_update_window"
+            if explicit_oai_window
+            else "historical_publication_window"
+        )
         arxiv_options.setdefault("oai_until_date", today)
         source_options["arxiv"] = arxiv_options
         frozen["source_options"] = source_options
     return frozen
+
+
+def _discovery_resume_identity(config, protocol):
+    keys = (
+        "sources",
+        "source_options",
+        "max_results_per_query",
+        "from_publication_date",
+        "to_publication_date",
+        "mailto",
+        "sleep_seconds",
+    )
+    return {
+        "discovery_config": {
+            key: config.get(key)
+            for key in keys
+            if key in config
+        },
+        "search_protocol": protocol,
+    }
 
 
 def _plan_payload(plan):
@@ -318,10 +347,7 @@ def _run_scopus_partitioned(
 
 def discover_restartable(store, config, protocol, *, resume=True):
     """Run every source independently; persist successes even if others fail."""
-    resume_identity = {
-        "discovery_config": config,
-        "search_protocol": protocol,
-    }
+    resume_identity = _discovery_resume_identity(config, protocol)
     frozen = _freeze_config(config)
     plan = build_search_plan(frozen, protocol)
     payload = {
@@ -357,6 +383,10 @@ def discover_restartable(store, config, protocol, *, resume=True):
                     queries=queries,
                     kwargs=kwargs,
                     resume=resume,
+                    coverage_mode=frozen.get(
+                        "_arxiv_coverage_mode",
+                        "historical_publication_window",
+                    ),
                 )
             )
             continue
