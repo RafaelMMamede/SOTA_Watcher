@@ -739,6 +739,16 @@ class CorpusStore:
         )
         self.conn.commit()
 
+    def mark_discovery_task_incomplete(self, task_id: str, reason: str):
+        self.conn.execute(
+            """UPDATE discovery_tasks
+               SET status='incomplete', error_type='',
+                   error_message=?, updated_at=?
+               WHERE task_id=?""",
+            (reason, utc_now(), task_id),
+        )
+        self.conn.commit()
+
     def mark_discovery_task_error(self, task_id: str, exc: Exception):
         self.conn.execute(
             """UPDATE discovery_tasks
