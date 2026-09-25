@@ -320,7 +320,7 @@ def iter_openalex_pages(
         )
 
     client = session or requests.Session()
-    seen_ids = set(resume.get("seen_ids", []))
+    seen_ids = set()
     seen_cursors = set(resume.get("seen_cursors", []))
     seen_cursors.add(params["cursor"])
     retrieved = int(resume.get("retrieved", 0))
@@ -411,7 +411,6 @@ def iter_openalex_pages(
                 "cursor": cursor if page["stop_reason"] == "more_pages" else None,
                 "retrieved": retrieved,
                 "total": total,
-                "seen_ids": sorted(seen_ids),
                 "seen_cursors": sorted(checkpoint_seen_cursors),
             }
 
