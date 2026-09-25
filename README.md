@@ -34,7 +34,22 @@ and freeze the final protocol before the production search.
 
 Eligibility criteria have a unique `id`, `kind` (`inclusion` or `exclusion`) and
 `description`. All inclusion criteria must be met; any met exclusion criterion
-excludes. Full-text model decisions are provisional; human decisions are separate.
+excludes. A criterion may also define `applies_to_search_topics` with one or more
+search IDs. Such a criterion is screened only for candidates retrieved by at least
+one of those search families; criteria without this field are universal. Unknown
+search IDs fail protocol validation. The active and inactive criteria for each
+paper are retained in the screening artifacts/table. Full-text model decisions are
+provisional; human decisions are separate.
+
+For example, a GAN-only false-positive exclusion belongs to the adversarial search
+family rather than the visual-forgery family:
+
+```yaml
+- id: generative_adversarial_only
+  kind: exclusion
+  applies_to_search_topics: [adversarial_vision]
+  description: For adversarial-vision candidates, uses "adversarial" only for generative adversarial networks or generative-model training, without studying adversarial examples, evasion attacks, perturbations, defenses, or robustness.
+```
 
 Legacy `topics` YAML still loads with a warning. Weighted topic terms and old
 `min_triage_score`, repository filters, and `drop_existing_below_min_score` settings
@@ -128,10 +143,13 @@ Extraction disables OCR; empty/scanned pages require manual review. Tables,
 equations, figures and reading order may remain imperfect.
 
 The fast primary deliberately uses `think: false` **without** Ollama's server-side
-`format` constraint; the schema is supplied in the prompt and the returned text
-must pass the strict local JSON/schema/evidence validator. This avoids spending
-large reasoning budgets on routine chunks while containing the Qwen/Ollama
-structured-output behavior previously observed with no-thinking mode.
+`format` constraint. A dedicated fast-screening prompt explicitly distinguishes
+inclusion from exclusion semantics, requires `uncertain` when the supplied pages
+do not settle a criterion, and requires evidence to name the page containing the
+quote. The returned text must still pass the strict local JSON/schema/evidence
+validator. This avoids spending large reasoning budgets on routine chunks while
+containing the Qwen/Ollama structured-output behavior previously observed with
+no-thinking mode.
 
 If the fast pass is invalid, the same chunk is retried once with
 `fallback_think: low`, Ollama structured output, and
@@ -156,9 +174,11 @@ every fragment. No text is silently dropped or reordered. A conservative UTF-8
 byte budget reserves space for instructions/schema and the larger reasoning
 fallback output; this is not a model-specific tokenizer. Each part uses the same
 criterion schema. Definite assessments require grounded evidence from a supplied
-PDF page. Invalid JSON, invented quotes/pages, missing criteria, transport failure
-and empty extraction stay uncertain; fallback length exhaustion is first handled
-by bounded adaptive splitting as described above.
+PDF page. If a model gives the wrong page number but its quote resolves to exactly
+one supplied page, the validator canonicalizes the evidence to that page; ambiguous
+cross-page matches still fail. Invalid JSON, invented quotes, ambiguous evidence,
+missing criteria, transport failure and empty extraction stay uncertain; fallback
+length exhaustion is first handled by bounded adaptive splitting as described above.
 Conflicting evidence across parts becomes uncertain for that criterion. Absence
 of evidence in a part must not be interpreted as a failed criterion.
 
