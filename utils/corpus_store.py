@@ -173,6 +173,15 @@ class CorpusStore:
         self.conn.commit()
 
     def _matching_ids(self, paper: dict) -> list[str]:
+        direct = paper.get("corpus_id")
+        if direct:
+            row = self.conn.execute(
+                "SELECT corpus_id FROM papers WHERE corpus_id=?",
+                (str(direct),),
+            ).fetchone()
+            if row:
+                return [row["corpus_id"]]
+
         keys = sorted(identifiers(paper))
         if not keys:
             return []
@@ -768,16 +777,27 @@ class CorpusStore:
         return len(frame)
 
     def export_workbook(self, path: str | Path) -> int:
-        papers = self.all_papers()
+        from utils.reporting import decorate
+
+        papers = [decorate(dict(paper)) for paper in self.all_papers()]
         save_table(pd.DataFrame(papers), str(path))
         return len(papers)
 
     def status(self) -> dict:
         papers = self.all_papers()
+        screening = Counter(
+            p.get("eligibility_status", "not_screened") for p in papers
+        )
         return {
             "papers": len(papers),
-            "screening_status": dict(
-                Counter(p.get("eligibility_status", "not_screened") for p in papers)
+            "screening_status": dict(screening),
+            "screening_pending_unattempted": (
+                screening.get("not_screened", 0)
+                + screening.get("deferred", 0)
+            ),
+            "screening_retry_required": (
+                screening.get("error", 0)
+                + screening.get("fulltext_unavailable", 0)
             ),
             "fulltext_status": dict(
                 Counter(p.get("fulltext_status", "not_requested") for p in papers)
