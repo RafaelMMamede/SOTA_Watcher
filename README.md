@@ -97,10 +97,12 @@ local harvesting ends. Capped OAI results are in harvest order, not globally ran
 
 Set `screening.enabled: true`, review the eligibility criteria, then ensure your
 configured Ollama model is installed and the server is running. The initial
-model setting is `qwen3.5:9b`, low thinking, 32K context, and an 8K generation budget. The request supplies
-the JSON schema both through Ollama's `format` field and in the prompt. A single
-surrounding Markdown JSON fence is tolerated before the same strict schema and
-page-evidence validation is applied.
+model setting is `qwen3.5:9b` with a 32K context. Screening uses a fast-first
+pipeline: a no-thinking 2K primary pass receives the JSON schema in the prompt
+and is checked locally; only invalid fast output is retried with Ollama structured
+output, low thinking, and an 8K fallback generation budget. A single surrounding
+Markdown JSON fence is tolerated before the same strict schema and page-evidence
+validation is applied.
 
 All current candidates are processed, up to `max_papers_per_run`; the remainder
 are `deferred` and retained. Full-text acquisition is independent of discovery:
@@ -125,28 +127,38 @@ URLs are preferred when metadata supplies them. See
 Extraction disables OCR; empty/scanned pages require manual review. Tables,
 equations, figures and reading order may remain imperfect.
 
-Qwen 3.5 users should avoid `think: false` when relying on Ollama structured
-outputs; some Ollama/Qwen 3.5 combinations have returned unconstrained prose in
-that mode. The example configuration therefore uses `think: low`.
+The fast primary deliberately uses `think: false` **without** Ollama's server-side
+`format` constraint; the schema is supplied in the prompt and the returned text
+must pass the strict local JSON/schema/evidence validator. This avoids spending
+large reasoning budgets on routine chunks while containing the Qwen/Ollama
+structured-output behavior previously observed with no-thinking mode.
 
-With thinking enabled, `num_predict` is the maximum generated-token budget for the
-request, so reasoning can consume part of it. The example uses `num_predict: 8192`.
-If the primary response truncates or fails strict schema/evidence validation, the
-pipeline performs at most one compact repair call (`repair_num_predict: 2048`)
-with thinking disabled and no server-side `format` constraint. The repair prompt
-still includes the schema and supplied pages, and its output must pass the same
-local exact-quote/schema validator. Primary and repair artifacts are retained
+If the fast pass is invalid, the same chunk is retried once with
+`fallback_think: low`, Ollama structured output, and
+`fallback_num_predict: 8192`. With thinking enabled, that generation budget can
+be consumed by reasoning. If and only if this fallback ends with
+`done_reason="length"`, the chunk is split in half and both children re-enter the
+fast-first pipeline. Multi-page chunks split between consecutive pages; a
+single-page chunk splits its text while preserving the PDF page number. Splitting
+is bounded by `max_split_depth` (default 6). Schema/evidence failures do not
+trigger recursive splitting. Fast, fallback, split, and child artifacts are saved
 separately; no invalid or truncated response is accepted as a screening result.
+
+The explicit configuration keys are `fast_num_predict`, `fallback_enabled`,
+`fallback_think`, `fallback_num_predict`, and `max_split_depth`. Legacy
+`think`, `num_predict`, `repair_invalid_output`, and `repair_num_predict`
+settings remain accepted as aliases for existing configurations.
 
 Extracted pages are greedily packed in order into bounded multi-page parts for
 `/api/chat`. Whole pages are kept together whenever they fit; only a single page
 that exceeds the entire part budget is split, with its page number preserved on
 every fragment. No text is silently dropped or reordered. A conservative UTF-8
-byte budget reserves space for instructions/schema and output; this is not a
-model-specific tokenizer. Each part uses the same criterion schema. Definite
-assessments require grounded evidence from a supplied PDF page. Invalid JSON,
-invented quotes/pages, missing criteria, truncated output, transport failure and
-empty extraction stay uncertain.
+byte budget reserves space for instructions/schema and the larger reasoning
+fallback output; this is not a model-specific tokenizer. Each part uses the same
+criterion schema. Definite assessments require grounded evidence from a supplied
+PDF page. Invalid JSON, invented quotes/pages, missing criteria, transport failure
+and empty extraction stay uncertain; fallback length exhaustion is first handled
+by bounded adaptive splitting as described above.
 Conflicting evidence across parts becomes uncertain for that criterion. Absence
 of evidence in a part must not be interpreted as a failed criterion.
 
