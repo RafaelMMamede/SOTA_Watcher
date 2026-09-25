@@ -14,6 +14,16 @@ from sources.ieee_source import search_ieee, iter_ieee_pages
 from sources.scopus_source import search_scopus, iter_scopus_pages
 
 
+def _source_iterators():
+    """Return current iterator callables so tests/clients can patch them safely."""
+    return {
+        "openalex": iter_openalex_pages,
+        "arxiv": iter_arxiv_pages,
+        "ieee": iter_ieee_pages,
+        "scopus": iter_scopus_pages,
+    }
+
+
 def get_queries_from_search_terms(search_terms: dict, source: str = "openalex") -> list[tuple[str, str]]:
     structured = queries_for(search_terms, source)
     if structured is not None:
@@ -38,8 +48,7 @@ def build_search_plan(config: dict, search_terms: dict):
     validate_protocol(search_terms)
     adapters = {"openalex": search_openalex, "arxiv": search_arxiv,
                 "ieee": search_ieee, "scopus": search_scopus}
-    signatures = {"openalex": iter_openalex_pages, "arxiv": iter_arxiv_pages,
-                  "ieee": iter_ieee_pages, "scopus": iter_scopus_pages}
+    signatures = _source_iterators()
     enabled = config.get("sources", ["openalex"])
     if not isinstance(enabled, list) or not enabled or any(not isinstance(s, str) or s not in adapters for s in enabled):
         raise ValueError("sources must be a nonempty list containing openalex, arxiv, ieee or scopus.")
@@ -126,6 +135,7 @@ def build_search_plan(config: dict, search_terms: dict):
 
 def fetch_papers(config: dict, search_terms: dict, *, audit=None) -> list[dict]:
     plan = build_search_plan(config, search_terms)
+    signatures = _source_iterators()
 
     if audit:
         audit.snapshot(
