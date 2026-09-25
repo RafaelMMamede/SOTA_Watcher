@@ -27,7 +27,10 @@ def _criteria_for_paper(criteria, paper):
     inactive = []
     for criterion in criteria:
         applies = criterion.get("applies_to_search_topics")
-        if applies is None or topics.intersection(applies):
+        skips = criterion.get("skip_if_search_topics")
+        if skips is not None and topics.intersection(skips):
+            inactive.append(criterion["id"])
+        elif applies is None or topics.intersection(applies):
             active.append(criterion)
         else:
             inactive.append(criterion["id"])
