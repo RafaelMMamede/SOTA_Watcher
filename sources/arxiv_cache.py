@@ -48,7 +48,13 @@ def _resumption_token_error(exc):
     )
 
 
-def _run_harvest(store, config, *, resume):
+def _run_harvest(
+    store,
+    config,
+    *,
+    resume,
+    save_raw_responses=True,
+):
     harvest = store.ensure_arxiv_harvest(config)
     if harvest["status"] in {"complete", "incomplete"}:
         return harvest
@@ -81,7 +87,11 @@ def _run_harvest(store, config, *, resume):
                         for key, value in page.items()
                         if key not in {"records", "raw_response"}
                     },
-                    raw_response=page.get("raw_response"),
+                    raw_response=(
+                        page.get("raw_response")
+                        if save_raw_responses
+                        else None
+                    ),
                 )
                 resume_state = page["checkpoint"]
 
@@ -125,11 +135,17 @@ def run_shared_arxiv_discovery(
     kwargs,
     resume=True,
     coverage_mode="historical_publication_window",
+    save_raw_responses=True,
 ):
     """Harvest once, then evaluate every configured query locally."""
     harvest_config = _harvest_config(kwargs, coverage_mode)
     try:
-        harvest = _run_harvest(store, harvest_config, resume=resume)
+        harvest = _run_harvest(
+            store,
+            harvest_config,
+            resume=resume,
+            save_raw_responses=save_raw_responses,
+        )
     except Exception as exc:
         results = []
         # Represent every query as independently failed while keeping other
