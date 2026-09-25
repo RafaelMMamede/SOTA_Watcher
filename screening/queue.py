@@ -10,9 +10,13 @@ from screening.ollama import get_model_digest, screening_signature
 from screening.pipeline import _criteria_for_paper, screen_papers
 
 
-RETRYABLE_STATUSES = {
+RETRY_KEYS = {
     "error",
     "fulltext_unavailable",
+    "resolution",
+    "download",
+    "extraction",
+    "screening",
 }
 
 
@@ -71,7 +75,7 @@ def select_for_screening(store, protocol, config, *, limit=None, retry=None):
         raise ValueError("screen limit must be a positive integer or null.")
 
     retry = set(retry or [])
-    unknown = retry - RETRYABLE_STATUSES
+    unknown = retry - RETRY_KEYS
     if unknown:
         raise ValueError(f"Unsupported retry statuses: {sorted(unknown)}")
 
@@ -99,8 +103,13 @@ def select_for_screening(store, protocol, config, *, limit=None, retry=None):
                 summary.skipped_complete += 1
                 continue
             summary.stale += 1
-        elif status in RETRYABLE_STATUSES:
-            if status not in retry:
+        elif status == "fulltext_unavailable":
+            if "fulltext_unavailable" not in retry:
+                summary.skipped_retry_required += 1
+                continue
+        elif status == "error":
+            stage = paper.get("eligibility_error_stage") or ""
+            if "error" not in retry and stage not in retry:
                 summary.skipped_retry_required += 1
                 continue
         elif status not in {"not_screened", "deferred", ""}:
