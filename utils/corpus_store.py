@@ -146,6 +146,14 @@ class CorpusStore:
             );
             CREATE INDEX IF NOT EXISTS idx_discovery_tasks_run
                 ON discovery_tasks(run_id, status);
+            CREATE TABLE IF NOT EXISTS discovery_pages (
+                task_id TEXT NOT NULL REFERENCES discovery_tasks(task_id) ON DELETE CASCADE,
+                page_number INTEGER NOT NULL,
+                page_json TEXT NOT NULL,
+                raw_response TEXT NOT NULL DEFAULT '',
+                committed_at TEXT NOT NULL,
+                PRIMARY KEY (task_id, page_number)
+            );
             CREATE TABLE IF NOT EXISTS arxiv_harvests (
                 harvest_key TEXT PRIMARY KEY,
                 config_hash TEXT NOT NULL,
@@ -544,12 +552,41 @@ class CorpusStore:
         papers: list[dict],
         checkpoint: dict,
         *,
-        complete: bool,
+        task_status: str,
+        page_payload: dict | None = None,
+        raw_response=None,
     ):
-        """Atomically merge one page and advance its restart checkpoint."""
+        """Atomically merge one page, archive it, and advance its checkpoint."""
+        if task_status not in {"running", "complete", "incomplete"}:
+            raise ValueError("Invalid discovery task status.")
         with self.transaction():
+            row = self.conn.execute(
+                "SELECT pages_committed FROM discovery_tasks WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"Unknown discovery task: {task_id}")
+            page_number = row["pages_committed"] + 1
+
             for paper in papers:
                 self.upsert_paper(paper, commit=False)
+
+            self.conn.execute(
+                """INSERT INTO discovery_pages
+                   (task_id, page_number, page_json, raw_response, committed_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    task_id,
+                    page_number,
+                    _json(page_payload or {}),
+                    (
+                        raw_response
+                        if isinstance(raw_response, str)
+                        else _json(raw_response) if raw_response is not None else ""
+                    ),
+                    utc_now(),
+                ),
+            )
             self.conn.execute(
                 """UPDATE discovery_tasks
                    SET status=?, checkpoint_json=?,
@@ -558,7 +595,7 @@ class CorpusStore:
                        error_type='', error_message='', updated_at=?
                    WHERE task_id=?""",
                 (
-                    "complete" if complete else "running",
+                    task_status,
                     _json(checkpoint or {}),
                     len(papers),
                     utc_now(),
