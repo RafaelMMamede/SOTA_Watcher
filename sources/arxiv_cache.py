@@ -13,8 +13,9 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 
 
-def _harvest_config(kwargs):
+def _harvest_config(kwargs, coverage_mode):
     return {
+        "coverage_mode": coverage_mode,
         "from_publication_date": kwargs.get("from_publication_date"),
         "to_publication_date": kwargs.get("to_publication_date"),
         "oai_from_date": kwargs.get("oai_from_date"),
@@ -80,7 +81,7 @@ def _run_harvest(store, config, *, resume):
                 if current["status"] not in {"complete", "incomplete"}:
                     raise RuntimeError("arXiv harvest returned no completion page.")
             break
-        except Exception:
+        except Exception as exc:
             if resume_state and not restarted:
                 # OAI resumption tokens can expire. Restart only this cached
                 # harvest window; query/corpus state is independently deduped.
@@ -88,6 +89,7 @@ def _run_harvest(store, config, *, resume):
                 resume_state = {}
                 restarted = True
                 continue
+            store.mark_arxiv_harvest_error(harvest["harvest_key"], exc)
             raise
 
     return store.get_arxiv_harvest(harvest["harvest_key"])
@@ -109,9 +111,10 @@ def run_shared_arxiv_discovery(
     queries,
     kwargs,
     resume=True,
+    coverage_mode="historical_publication_window",
 ):
     """Harvest once, then evaluate every configured query locally."""
-    harvest_config = _harvest_config(kwargs)
+    harvest_config = _harvest_config(kwargs, coverage_mode)
     try:
         harvest = _run_harvest(store, harvest_config, resume=resume)
     except Exception as exc:
@@ -229,11 +232,7 @@ def run_shared_arxiv_discovery(
                 "query": query,
                 "harvest_key": harvest["harvest_key"],
                 "harvest_status": harvest["status"],
-                "coverage_scope": (
-                    "historical_publication_window"
-                    if kwargs.get("from_publication_date")
-                    else "oai_update_window"
-                ),
+                "coverage_scope": coverage_mode,
                 "publication_from": kwargs.get("from_publication_date"),
                 "publication_until": kwargs.get("to_publication_date"),
                 "oai_from": harvest_config.get("oai_from_date")
