@@ -39,6 +39,29 @@ class ProtocolTests(unittest.TestCase):
         ]=['typo']
         with self.assertRaisesRegex(ValueError,'unknown applies_to_search_topics'):
             validate_protocol(protocol)
+    def test_gan_only_exclusion_requires_adversarial_scope(self):
+        protocol={
+            'schema_version':2,
+            'searches':[
+                {'id':'visual_forgery_detection','queries':{'openalex':['q']}},
+                {'id':'adversarial_vision','queries':{'openalex':['r']}},
+            ],
+            'eligibility':{
+                'criteria':[
+                    {
+                        'id':'generative_adversarial_only',
+                        'kind':'exclusion',
+                        'description':'GAN-only false positive.',
+                    },
+                ],
+            },
+        }
+        with self.assertRaisesRegex(
+            ValueError,
+            'must declare applies_to_search_topics',
+        ):
+            validate_protocol(protocol)
+
     def test_manual_precedence(self):
         row=initialize_eligibility({'manual_decision':'include', 'eligibility_decision':'exclude'})
         self.assertEqual(final_decision(row),'include')
