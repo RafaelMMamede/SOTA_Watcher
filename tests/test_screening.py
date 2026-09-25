@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 from screening.ollama import _pack_pages, validate_result, aggregate, parse_structured_content, screen_extraction
-from screening.pipeline import screen_papers
+from screening.pipeline import _criteria_for_paper, screen_papers
 from utils.deduplication import merge_with_existing
 import pandas as pd
 
@@ -21,6 +21,59 @@ class ScreeningTests(unittest.TestCase):
         for value in (result(9),result(1,'Invented quote'),{'criteria':[]}):
             with self.assertRaises(ValueError):
                 validate_result(value,CRITERIA,PAGES)
+
+    def test_unique_quote_on_wrong_page_is_canonicalized(self):
+        value=result(page=1,quote='The evaluation uses images.')
+        rows=validate_result(value,CRITERIA,PAGES)
+        self.assertEqual(rows[0]['evidence'][0]['page'],2)
+        self.assertEqual(
+            rows[0]['evidence'][0]['quote'],
+            'The evaluation uses images.',
+        )
+
+    def test_wrong_page_quote_must_resolve_uniquely(self):
+        pages=[
+            {'page':1,'text':'Shared evidence sentence.'},
+            {'page':2,'text':'Shared evidence sentence.'},
+        ]
+        with self.assertRaisesRegex(ValueError,'Evidence quote/page'):
+            validate_result(
+                result(page=9,quote='Shared evidence sentence.'),
+                CRITERIA,
+                pages,
+            )
+
+    def test_search_topic_scopes_conditional_criteria(self):
+        criteria=[
+            {'id':'universal','kind':'inclusion','description':'Always applies.'},
+            {
+                'id':'adv_only',
+                'kind':'exclusion',
+                'description':'Only applies to adversarial search.',
+                'applies_to_search_topics':['adversarial_vision'],
+            },
+        ]
+        active,inactive,topics=_criteria_for_paper(
+            criteria,
+            {'search_topics':['visual_forgery_detection']},
+        )
+        self.assertEqual([c['id'] for c in active],['universal'])
+        self.assertEqual(inactive,['adv_only'])
+        self.assertEqual(topics,['visual_forgery_detection'])
+
+        active,inactive,topics=_criteria_for_paper(
+            criteria,
+            {'search_topics':['visual_forgery_detection','adversarial_vision']},
+        )
+        self.assertEqual(
+            [c['id'] for c in active],
+            ['universal','adv_only'],
+        )
+        self.assertEqual(inactive,[])
+        self.assertEqual(
+            topics,
+            ['adversarial_vision','visual_forgery_detection'],
+        )
     def test_boundary_ellipses_are_canonicalized_but_internal_omissions_fail(self):
         value=result(quote='...We study visual research....')
         rows=validate_result(value,CRITERIA,[PAGES[0]])
@@ -202,6 +255,9 @@ class ScreeningTests(unittest.TestCase):
         self.assertFalse(fast_payload['think'])
         self.assertNotIn('format',fast_payload)
         self.assertEqual(fast_payload['options']['num_predict'],2048)
+        fast_system=fast_payload['messages'][0]['content']
+        self.assertNotIn('Repair an eligibility-screening response',fast_system)
+        self.assertIn('exact page containing that quote',fast_system)
 
         fallback_payload=post.call_args_list[1].kwargs['json']
         self.assertEqual(fallback_payload['think'],'low')
