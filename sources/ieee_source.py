@@ -80,7 +80,7 @@ def iter_ieee_pages(
         params["end_year"] = end_year
     retrieved = int(resume.get("retrieved", 0))
     total = resume.get("total")
-    seen = set(resume.get("seen_ids", []))
+    seen = set()
     try:
         while True:
             params["start_record"] = retrieved + 1
@@ -107,7 +107,6 @@ def iter_ieee_pages(
             page["checkpoint"] = {
                 "retrieved": retrieved,
                 "total": total,
-                "seen_ids": sorted(seen),
             }
             yield page
             if page["stop_reason"] != "more_pages":
