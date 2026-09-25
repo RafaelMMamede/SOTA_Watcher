@@ -66,6 +66,12 @@ def _run_harvest(store, config, *, resume):
                     page["records"],
                     page["checkpoint"],
                     status=status,
+                    page_payload={
+                        key: value
+                        for key, value in page.items()
+                        if key not in {"records", "raw_response"}
+                    },
+                    raw_response=page.get("raw_response"),
                 )
                 resume_state = page["checkpoint"]
 
