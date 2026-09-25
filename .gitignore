@@ -59,3 +59,8 @@ Thumbs.db
 .vscode/
 .idea/
 !.env.example
+
+# Persistent SQLite working state
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
