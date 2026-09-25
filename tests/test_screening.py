@@ -55,6 +55,7 @@ class ScreeningTests(unittest.TestCase):
                 'kind':'exclusion',
                 'description':'Only applies to adversarial search.',
                 'applies_to_search_topics':['adversarial_vision'],
+                'skip_if_search_topics':['visual_forgery_detection'],
             },
         ]
         active,inactive,topics=_criteria_for_paper(
@@ -69,11 +70,8 @@ class ScreeningTests(unittest.TestCase):
             criteria,
             {'search_topics':['visual_forgery_detection','adversarial_vision']},
         )
-        self.assertEqual(
-            [c['id'] for c in active],
-            ['universal','adv_only'],
-        )
-        self.assertEqual(inactive,[])
+        self.assertEqual([c['id'] for c in active],['universal'])
+        self.assertEqual(inactive,['adv_only'])
         self.assertEqual(
             topics,
             ['adversarial_vision','visual_forgery_detection'],
