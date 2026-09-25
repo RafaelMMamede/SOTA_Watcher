@@ -164,6 +164,7 @@ def iter_scopus_pages(
     timeout: float = 30,
     max_retries: int = 3,
     session: requests.Session | None = None,
+    resume: dict | None = None,
 ) -> Iterator[dict]:
     """Yield auditable Scopus pages with exact local date cutoffs.
 
@@ -241,18 +242,28 @@ def iter_scopus_pages(
         "sort": "-coverDate,+artnum,+creator",
     }
     client = session if session is not None else requests.Session()
+    resume = resume or {}
+    if not isinstance(resume, dict):
+        raise ValueError("Scopus resume state must be a mapping.")
 
-    mode = "cursor" if pagination_mode in {"auto", "cursor"} else "offset"
-    cursor = "*"
-    seen_cursors = {"*"}
-    source_retrieved = 0
-    exact_retrieved = 0
-    exact_seen = 0
-    locally_excluded = 0
-    cap_trimmed = 0
-    total = None
-    seen_ids: set[str] = set()
-    fallback_used = False
+    mode = resume.get(
+        "mode",
+        "cursor" if pagination_mode in {"auto", "cursor"} else "offset",
+    )
+    if mode not in {"cursor", "offset"}:
+        raise ValueError("Scopus resume mode must be cursor or offset.")
+    cursor = resume.get("cursor", "*")
+    seen_cursors = set(resume.get("seen_cursors", []))
+    if mode == "cursor" and cursor:
+        seen_cursors.add(cursor)
+    source_retrieved = int(resume.get("source_retrieved", 0))
+    exact_retrieved = int(resume.get("exact_retrieved", 0))
+    exact_seen = int(resume.get("exact_seen", 0))
+    locally_excluded = int(resume.get("locally_excluded", 0))
+    cap_trimmed = int(resume.get("cap_trimmed", 0))
+    total = resume.get("total")
+    seen_ids: set[str] = set(resume.get("seen_ids", []))
+    fallback_used = bool(resume.get("fallback_used", False))
 
     try:
         while True:
@@ -432,6 +443,10 @@ def iter_scopus_pages(
                         "its cursor; search incomplete."
                     )
 
+            checkpoint_seen_cursors = set(seen_cursors)
+            if next_cursor:
+                checkpoint_seen_cursors.add(next_cursor)
+
             page = {
                 "source": "scopus",
                 "query": query,
@@ -453,6 +468,23 @@ def iter_scopus_pages(
                     "to": upper.isoformat() if upper else None,
                 },
                 "exact_date_total": exact_seen if provider_complete else None,
+                "checkpoint": {
+                    "mode": mode,
+                    "cursor": (
+                        next_cursor
+                        if mode == "cursor" and stop_reason == "more_pages"
+                        else None
+                    ),
+                    "seen_cursors": sorted(checkpoint_seen_cursors),
+                    "source_retrieved": source_retrieved,
+                    "exact_retrieved": exact_retrieved,
+                    "exact_seen": exact_seen,
+                    "locally_excluded": locally_excluded,
+                    "cap_trimmed": cap_trimmed,
+                    "total": total,
+                    "seen_ids": sorted(seen_ids),
+                    "fallback_used": fallback_used,
+                },
             }
 
             yield page
