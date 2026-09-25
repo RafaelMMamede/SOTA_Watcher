@@ -53,7 +53,9 @@ def build_search_plan(config: dict, search_terms: dict):
         options = source_options.get(source, {})
         if not isinstance(options, dict):
             raise ValueError(f"source_options.{source} must be a mapping.")
-        allowed = set(inspect.signature(signatures[source]).parameters) - {"query", "session", "api_key", "insttoken"}
+        allowed = set(inspect.signature(signatures[source]).parameters) - {
+            "query", "session", "api_key", "insttoken", "resume"
+        }
         if set(options) - allowed:
             raise ValueError(f"Unsupported options for {source}: {sorted(set(options) - allowed)}. Set credentials in environment variables.")
 
