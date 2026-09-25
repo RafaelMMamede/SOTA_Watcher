@@ -59,6 +59,9 @@ def screening_signature(criteria, cfg, pdf_sha256, model_digest):
     """Hash every input that makes a completed screening assessment reusable."""
     return digest({
         'prompt_version': PROMPT_VERSION,
+        'system': SYSTEM,
+        'fast_system': FAST_SYSTEM,
+        'schema': SCHEMA,
         'criteria': criteria,
         'pdf_sha256': pdf_sha256 or '',
         'model': cfg.get('model', 'qwen3.5:9b'),
