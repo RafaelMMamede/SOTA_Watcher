@@ -38,10 +38,14 @@ def validate_protocol(protocol):
             criterion['id'] == 'generative_adversarial_only'
             and 'adversarial_vision' in ids
             and (
-                applies != ['adversarial_vision']
+                not isinstance(applies, list)
+                or 'adversarial_vision' not in applies
                 or (
                     'visual_forgery_detection' in ids
-                    and skips != ['visual_forgery_detection']
+                    and (
+                        not isinstance(skips, list)
+                        or 'visual_forgery_detection' not in skips
+                    )
                 )
             )
         ):
