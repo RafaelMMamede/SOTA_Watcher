@@ -76,6 +76,75 @@ class ScreeningTests(unittest.TestCase):
             topics,
             ['adversarial_vision','visual_forgery_detection'],
         )
+    def test_safe_typographic_variants_are_canonicalized_to_source(self):
+        source=(
+            "This section’s goal is to describe these four families and "
+            "their technical characteristics, as well as their implications "
+            "for detection and assessment. The source calls them “signals”."
+        )
+        pages=[{'page':7,'text':source}]
+        value=result(
+            page=7,
+            quote=(
+                "This section's goal is to describe these four families and "
+                "their technical characteristics, as well as their implications "
+                "for detection and assessment."
+            ),
+        )
+        rows=validate_result(value,CRITERIA,pages)
+        self.assertEqual(
+            rows[0]['evidence'][0]['quote'],
+            (
+                "This section’s goal is to describe these four families and "
+                "their technical characteristics, as well as their implications "
+                "for detection and assessment."
+            ),
+        )
+
+        value=result(page=7,quote='The source calls them "signals".')
+        rows=validate_result(value,CRITERIA,pages)
+        self.assertEqual(
+            rows[0]['evidence'][0]['quote'],
+            'The source calls them “signals”.',
+        )
+
+    def test_nonbreaking_space_is_safe_but_content_changes_are_not(self):
+        pages=[{
+            'page':1,
+            'text':'Images, videos, and\u00a0speech are evaluated.',
+        }]
+        rows=validate_result(
+            result(quote='Images, videos, and speech are evaluated.'),
+            CRITERIA,
+            pages,
+        )
+        self.assertEqual(
+            rows[0]['evidence'][0]['quote'],
+            'Images, videos, and speech are evaluated.',
+        )
+
+        with self.assertRaisesRegex(ValueError,'Evidence quote/page'):
+            validate_result(
+                result(quote='Images, videos and speech are evaluated.'),
+                CRITERIA,
+                pages,
+            )
+
+    def test_typographic_fallback_must_be_unique(self):
+        pages=[{
+            'page':1,
+            'text':(
+                "Author’s method is discussed. "
+                "Author’s method is discussed."
+            ),
+        }]
+        with self.assertRaisesRegex(ValueError,'Evidence quote/page'):
+            validate_result(
+                result(quote="Author's method is discussed."),
+                CRITERIA,
+                pages,
+            )
+
     def test_boundary_ellipses_are_canonicalized_but_internal_omissions_fail(self):
         value=result(quote='...We study visual research....')
         rows=validate_result(value,CRITERIA,[PAGES[0]])
