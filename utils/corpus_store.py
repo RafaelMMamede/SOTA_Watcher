@@ -167,6 +167,11 @@ class CorpusStore:
                 committed_at TEXT NOT NULL,
                 PRIMARY KEY (task_id, page_number)
             );
+            CREATE TABLE IF NOT EXISTS discovery_task_records (
+                task_id TEXT NOT NULL REFERENCES discovery_tasks(task_id) ON DELETE CASCADE,
+                record_key TEXT NOT NULL,
+                PRIMARY KEY (task_id, record_key)
+            );
             CREATE TABLE IF NOT EXISTS arxiv_harvests (
                 harvest_key TEXT PRIMARY KEY,
                 config_hash TEXT NOT NULL,
@@ -625,6 +630,10 @@ class CorpusStore:
         """Restart one partition while retaining papers already merged globally."""
         with self.transaction():
             self.conn.execute(
+                "DELETE FROM discovery_task_records WHERE task_id=?",
+                (task_id,),
+            )
+            self.conn.execute(
                 "DELETE FROM discovery_pages WHERE task_id=?",
                 (task_id,),
             )
@@ -660,6 +669,27 @@ class CorpusStore:
             page_number = row["pages_committed"] + 1
 
             for paper in papers:
+                aliases = sorted(identifiers(paper))
+                record_key = (
+                    str(paper.get("paper_id")).strip()
+                    if present(paper.get("paper_id"))
+                    else aliases[0]
+                    if aliases
+                    else hashlib.sha256(
+                        _json(_metadata_only(paper)).encode()
+                    ).hexdigest()
+                )
+                try:
+                    self.conn.execute(
+                        """INSERT INTO discovery_task_records
+                           (task_id, record_key) VALUES (?, ?)""",
+                        (task_id, record_key),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise RuntimeError(
+                        "Discovery source repeated a record within one "
+                        "query/partition; completeness is uncertain."
+                    ) from exc
                 self.upsert_paper(paper, commit=False)
 
             self.conn.execute(
