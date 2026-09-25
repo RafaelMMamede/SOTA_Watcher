@@ -52,7 +52,6 @@ def _retrieval_protocol(protocol):
     if protocol.get("schema_version") == 2:
         return {
             "schema_version": 2,
-            "review": deepcopy(protocol.get("review", {})),
             "searches": deepcopy(protocol.get("searches", [])),
         }
     return {
