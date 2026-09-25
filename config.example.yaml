@@ -48,15 +48,17 @@ screening:
   enabled: false
   model: qwen3.5:9b
   base_url: http://localhost:11434
-  # Qwen 3.5 structured output is more reliable in Ollama with low thinking.
-  think: low
   num_ctx: 32768
-  # Leave enough generation budget for low-thinking reasoning + JSON output.
-  num_predict: 8192
-  # One compact no-thinking repair attempt is allowed if the primary
-  # response truncates or fails strict schema/evidence validation.
-  repair_invalid_output: true
-  repair_num_predict: 2048
+  # Fast path: no thinking, explicit JSON schema in the prompt, strict local validation.
+  fast_num_predict: 2048
+  # If the fast pass is invalid, retry once with structured low-thinking output.
+  fallback_enabled: true
+  fallback_think: low
+  fallback_num_predict: 8192
+  # If the reasoning fallback hits done_reason=length, split that chunk and retry.
+  max_split_depth: 6
+  # Legacy aliases remain accepted: think, num_predict,
+  # repair_invalid_output, and repair_num_predict.
   timeout_seconds: 300
   max_papers_per_run: null
   papers_dir: output/papers
