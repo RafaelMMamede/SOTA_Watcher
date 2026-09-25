@@ -98,7 +98,7 @@ def command_export(args, config):
     with CorpusStore(_store_path(config)) as store:
         # Pull human edits back in before replacing the workbook.
         if Path(path).exists():
-            store.import_workbook(path)
+            store.import_workbook(path, include_processing=False)
         count = store.export_workbook(path)
     print(f"Exported {count} corpus rows to {path}.")
 
@@ -121,7 +121,7 @@ def command_screen(args, config, terms):
     with CorpusStore(_store_path(config)) as store:
         workbook = Path(config.get('sota_table_path', 'output/sota_table.xlsx'))
         if workbook.exists():
-            store.import_workbook(workbook)
+            store.import_workbook(workbook, include_processing=False)
         summary = screen_saved_corpus(
             store,
             terms,
