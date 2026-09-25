@@ -56,7 +56,7 @@ def iter_ieee_pages(
     query: str, *, api_key: str | None = None, max_results: int | None = None,
     page_size: int = 200, start_year: int | None = None, end_year: int | None = None,
     sleep_seconds: float = 1.0, timeout: float = 30, max_retries: int = 3,
-    session: requests.Session | None = None,
+    session: requests.Session | None = None, resume: dict | None = None,
 ) -> Iterator[dict]:
     """Yield auditable pages. None retrieves all matches; a cap is marked incomplete.
 
@@ -68,6 +68,9 @@ def iter_ieee_pages(
     wildcard_words = re.findall(r"[^\s()\"]*\*[^\s()\"]*", query)
     if len(wildcard_words) > 2 or any(len(w.split("*", 1)[0]) < 3 for w in wildcard_words):
         raise ValueError("IEEE permits at most two wildcard words, each with at least three characters before '*'. Expand terms or split the query.")
+    resume = resume or {}
+    if not isinstance(resume, dict):
+        raise ValueError("IEEE resume state must be a mapping.")
     key = get_key(api_key, "IEEE_API_KEY")
     client = session if session is not None else requests.Session()
     params = {"querytext": query, "format": "json", "sort_field": "article_number", "sort_order": "asc"}
@@ -75,8 +78,9 @@ def iter_ieee_pages(
         params["start_year"] = start_year
     if end_year is not None:
         params["end_year"] = end_year
-    retrieved, total = 0, None
-    seen = set()
+    retrieved = int(resume.get("retrieved", 0))
+    total = resume.get("total")
+    seen = set(resume.get("seen_ids", []))
     try:
         while True:
             params["start_record"] = retrieved + 1
@@ -100,6 +104,11 @@ def iter_ieee_pages(
                 seen.add(paper["paper_id"])
             retrieved += len(papers)
             page = batch("ieee", query, params, data, papers, total, retrieved, max_results)
+            page["checkpoint"] = {
+                "retrieved": retrieved,
+                "total": total,
+                "seen_ids": sorted(seen),
+            }
             yield page
             if page["stop_reason"] != "more_pages":
                 return
