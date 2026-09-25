@@ -163,13 +163,18 @@ def _run_standard_task(
             break
 
         except Exception as exc:
-            if (
+            cursor_resume = (
+                source == "openalex"
+                and resume_state
+                and resume_state.get("cursor")
+            ) or (
                 source == "scopus"
                 and resume_state
                 and resume_state.get("mode") == "cursor"
-                and not restarted_expired_cursor
-            ):
-                # A provider may reject an old cursor after a long interruption.
+                and resume_state.get("cursor")
+            )
+            if cursor_resume and not restarted_expired_cursor:
+                # Provider cursors may expire after a long interruption.
                 # Restart only this partition; globally merged papers remain.
                 store.reset_discovery_task(task["task_id"])
                 resume_state = {}
