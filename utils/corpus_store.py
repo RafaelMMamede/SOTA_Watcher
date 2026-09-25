@@ -119,6 +119,19 @@ class CorpusStore:
                 artifact_folder TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS screening_batches (
+                batch_id TEXT PRIMARY KEY,
+                started_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL,
+                selected INTEGER NOT NULL,
+                completed INTEGER NOT NULL,
+                errors INTEGER NOT NULL,
+                unavailable INTEGER NOT NULL,
+                remaining_pending INTEGER NOT NULL,
+                elapsed_seconds REAL NOT NULL,
+                papers_per_minute REAL NOT NULL,
+                estimated_remaining_minutes REAL
+            );
             CREATE TABLE IF NOT EXISTS discovery_runs (
                 run_id TEXT PRIMARY KEY,
                 config_hash TEXT NOT NULL,
@@ -807,15 +820,28 @@ class CorpusStore:
             )
         ]
 
-    def import_workbook(self, path: str | Path) -> int:
+    def import_workbook(
+        self,
+        path: str | Path,
+        *,
+        include_processing: bool = True,
+    ) -> int:
         frame = load_existing_table(str(path))
         has_human_columns = any(field in frame.columns for field in HUMAN_FIELDS)
-        for paper in frame.to_dict("records"):
+        for raw in frame.to_dict("records"):
+            paper = dict(raw)
+            if not include_processing:
+                paper = {
+                    key: value
+                    for key, value in paper.items()
+                    if not key.startswith(PROCESS_PREFIXES)
+                    and key not in DERIVED_FIELDS
+                }
             corpus_id = self.upsert_paper(paper)
             if has_human_columns:
                 values = {}
                 for field in HUMAN_FIELDS:
-                    value = paper.get(field, "")
+                    value = raw.get(field, "")
                     values[field] = str(value) if present(value) else ""
                 self.set_human_review(
                     corpus_id,
@@ -831,6 +857,38 @@ class CorpusStore:
         papers = [decorate(dict(paper)) for paper in self.all_papers()]
         save_table(pd.DataFrame(papers), str(path))
         return len(papers)
+
+    def record_screening_batch(self, summary: dict):
+        batch_id = "sb_" + uuid.uuid4().hex
+        now = utc_now()
+        self.conn.execute(
+            """INSERT INTO screening_batches
+               (batch_id, started_at, completed_at, selected, completed,
+                errors, unavailable, remaining_pending, elapsed_seconds,
+                papers_per_minute, estimated_remaining_minutes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                batch_id,
+                now,
+                now,
+                int(summary.get("selected", 0)),
+                int(summary.get("completed", 0)),
+                int(summary.get("errors", 0)),
+                int(summary.get("unavailable", 0)),
+                int(summary.get("remaining_pending", 0)),
+                float(summary.get("elapsed_seconds", 0.0)),
+                float(summary.get("papers_per_minute", 0.0)),
+                summary.get("estimated_remaining_minutes"),
+            ),
+        )
+        self.conn.commit()
+
+    def latest_screening_batch(self) -> dict | None:
+        row = self.conn.execute(
+            """SELECT * FROM screening_batches
+               ORDER BY completed_at DESC LIMIT 1"""
+        ).fetchone()
+        return dict(row) if row else None
 
     def status(self) -> dict:
         papers = self.all_papers()
@@ -858,4 +916,13 @@ class CorpusStore:
                     if p.get("manual_decision")
                 )
             ),
+            "screening_error_stages": dict(
+                Counter(
+                    p.get("eligibility_error_stage")
+                    for p in papers
+                    if p.get("eligibility_status") == "error"
+                    and p.get("eligibility_error_stage")
+                )
+            ),
+            "last_screening_batch": self.latest_screening_batch(),
         }
