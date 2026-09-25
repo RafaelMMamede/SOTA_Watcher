@@ -784,9 +784,16 @@ class CorpusStore:
                 "SELECT status, COUNT(*) AS count FROM arxiv_harvests GROUP BY status"
             )
         }
+        totals = self.conn.execute(
+            """SELECT COALESCE(SUM(pages_committed),0) AS pages,
+                      COALESCE(SUM(records_committed),0) AS records
+               FROM discovery_tasks"""
+        ).fetchone()
         return {
             "runs": run_counts,
             "tasks": task_counts,
+            "pages_committed": totals["pages"],
+            "records_committed": totals["records"],
             "arxiv_harvests": harvest_counts,
         }
 
