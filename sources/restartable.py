@@ -150,6 +150,7 @@ def _run_standard_task(
     query,
     kwargs,
     resume,
+    save_raw_responses=True,
 ):
     partition_key = _partition_key(kwargs)
     task = store.ensure_discovery_task(
@@ -206,7 +207,11 @@ def _run_standard_task(
                     page.get("checkpoint", {}),
                     task_status=task_status,
                     page_payload=_page_metadata(page),
-                    raw_response=page.get("raw_response"),
+                    raw_response=(
+                        page.get("raw_response")
+                        if save_raw_responses
+                        else None
+                    ),
                 )
                 resume_state = page.get("checkpoint", {})
 
@@ -316,6 +321,7 @@ def _run_scopus_partitioned(
     query,
     kwargs,
     resume,
+    save_raw_responses=True,
 ):
     result = _run_standard_task(
         store,
@@ -325,6 +331,7 @@ def _run_scopus_partitioned(
         query=query,
         kwargs=kwargs,
         resume=resume,
+        save_raw_responses=save_raw_responses,
     )
     if result["status"] != "partition_required":
         return [result]
@@ -351,6 +358,7 @@ def _run_scopus_partitioned(
         query=query,
         kwargs=left,
         resume=resume,
+        save_raw_responses=save_raw_responses,
     )
     right_results = _run_scopus_partitioned(
         store,
@@ -359,6 +367,7 @@ def _run_scopus_partitioned(
         query=query,
         kwargs=right,
         resume=resume,
+        save_raw_responses=save_raw_responses,
     )
     child_ids = [
         left_results[0]["task_id"],
@@ -442,6 +451,10 @@ def discover_restartable(store, config, protocol, *, resume=True):
                         "_arxiv_coverage_mode",
                         "historical_publication_window",
                     ),
+                    save_raw_responses=frozen.get(
+                        "save_raw_responses",
+                        True,
+                    ),
                 )
             )
             continue
@@ -456,6 +469,10 @@ def discover_restartable(store, config, protocol, *, resume=True):
                         query=query,
                         kwargs=kwargs,
                         resume=resume,
+                        save_raw_responses=frozen.get(
+                            "save_raw_responses",
+                            True,
+                        ),
                     )
                 )
             else:
@@ -468,6 +485,10 @@ def discover_restartable(store, config, protocol, *, resume=True):
                         query=query,
                         kwargs=kwargs,
                         resume=resume,
+                        save_raw_responses=frozen.get(
+                            "save_raw_responses",
+                            True,
+                        ),
                     )
                 )
 
