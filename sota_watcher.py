@@ -5,6 +5,7 @@ import sys
 import pandas as pd
 
 from sources.discovery import fetch_papers, get_queries_from_search_terms
+from sources.restartable import discover_restartable
 from utils.config import load_config, load_search_terms
 from utils.io import make_output_dirs, load_existing_table, save_table
 from utils.deduplication import deduplicate_papers, merge_with_existing, identifiers
@@ -95,6 +96,9 @@ def command_import_workbook(args, config):
 def command_export(args, config):
     path = args.path or config.get('sota_table_path', 'output/sota_table.xlsx')
     with CorpusStore(_store_path(config)) as store:
+        # Pull human edits back in before replacing the workbook.
+        if Path(path).exists():
+            store.import_workbook(path)
         count = store.export_workbook(path)
     print(f"Exported {count} corpus rows to {path}.")
 
@@ -102,6 +106,7 @@ def command_export(args, config):
 def command_status(config):
     with CorpusStore(_store_path(config)) as store:
         status = store.status()
+        status["discovery"] = store.discovery_status()
     print(json.dumps(status, indent=2, sort_keys=True))
 
 
@@ -114,6 +119,9 @@ def command_screen(args, config, terms):
         limit = config.get('screening', {}).get('max_papers_per_run')
 
     with CorpusStore(_store_path(config)) as store:
+        workbook = Path(config.get('sota_table_path', 'output/sota_table.xlsx'))
+        if workbook.exists():
+            store.import_workbook(workbook)
         summary = screen_saved_corpus(
             store,
             terms,
@@ -124,20 +132,18 @@ def command_screen(args, config, terms):
     print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
 
 
-def command_discover_initial(config, terms):
-    """Initial persistent discovery path; resumable checkpoints extend this."""
-    root = config.get(
-        'discovery_log_dir',
-        str(Path(config.get('output_dir', 'output')) / 'discovery_runs'),
-    )
-    with DiscoveryLog(root) as audit:
-        print(f'Discovery archive: {audit.path}')
-        audit.snapshot('search_terms', terms)
-        papers = fetch_papers(config, terms, audit=audit)
-        with CorpusStore(_store_path(config)) as store:
-            for paper in papers:
-                store.upsert_paper(paper)
-        print(f"Persisted {len(papers)} retrieved records into the corpus.")
+def command_discover(args, config, terms):
+    with CorpusStore(_store_path(config)) as store:
+        workbook = Path(config.get('sota_table_path', 'output/sota_table.xlsx'))
+        if workbook.exists() and not store.all_papers():
+            store.import_workbook(workbook)
+        result = discover_restartable(
+            store,
+            config,
+            terms,
+            resume=args.resume,
+        )
+    print(json.dumps(result, indent=2, sort_keys=True))
 
 
 def build_parser():
@@ -189,7 +195,7 @@ def main(argv=None):
 
     args = build_parser().parse_args(argv)
     if args.command == 'discover':
-        command_discover_initial(config, terms)
+        command_discover(args, config, terms)
     elif args.command == 'screen':
         command_screen(args, config, terms)
     elif args.command == 'status':
