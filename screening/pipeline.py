@@ -90,11 +90,13 @@ def screen_papers(papers, protocol, config, audit=None):
             )
             continue
 
-        key = get_dedup_key(paper) or paper.get("title") or str(index)
-        folder = (
-            Path(cfg.get("papers_dir", "output/papers"))
-            / hashlib.sha256(key.encode()).hexdigest()[:24]
-        )
+        stable = paper.get("corpus_id")
+        if stable:
+            folder_name = str(stable)
+        else:
+            key = get_dedup_key(paper) or paper.get("title") or str(index)
+            folder_name = hashlib.sha256(key.encode()).hexdigest()[:24]
+        folder = Path(cfg.get("papers_dir", "output/papers")) / folder_name
         paper["fulltext_folder"] = str(folder)
         folder.mkdir(parents=True, exist_ok=True)
 
