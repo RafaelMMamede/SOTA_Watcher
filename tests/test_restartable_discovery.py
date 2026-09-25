@@ -195,6 +195,27 @@ class RestartableDiscoveryTests(unittest.TestCase):
                 self.assertEqual(second['run_id'], first['run_id'])
                 self.assertTrue(second['tasks'][0]['skipped'])
 
+    def test_enabled_source_without_queries_keeps_run_incomplete(self):
+        cfg = {
+            'sources': ['openalex'],
+            'from_publication_date': '2026-01-01',
+            'to_publication_date': '2026-09-25',
+        }
+        terms = protocol([
+            {'id': 'visual', 'queries': {'openalex': []}},
+        ])
+        with tempfile.TemporaryDirectory() as folder:
+            with CorpusStore(Path(folder) / 'corpus.sqlite3') as store:
+                result = discover_restartable(
+                    store, cfg, terms, resume=True
+                )
+                self.assertEqual(result['status'], 'incomplete')
+                self.assertEqual(result['tasks'][0]['status'], 'incomplete')
+                self.assertIn(
+                    'No queries configured',
+                    result['tasks'][0]['reason'],
+                )
+
     def test_one_provider_failure_preserves_other_results(self):
         cfg = {
             'sources': ['openalex', 'ieee'],
