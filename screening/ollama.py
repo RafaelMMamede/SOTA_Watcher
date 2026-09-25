@@ -46,6 +46,44 @@ def digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
+def get_model_digest(cfg):
+    """Return the installed Ollama digest for the configured screening model."""
+    model = cfg.get('model', 'qwen3.5:9b')
+    base = cfg.get('base_url', 'http://localhost:11434').rstrip('/')
+    timeout = cfg.get('timeout_seconds', 300)
+    model_digest = get_model_digest(cfg)
+    return model_digest
+
+
+def screening_signature(criteria, cfg, pdf_sha256, model_digest):
+    """Hash every input that makes a completed screening assessment reusable."""
+    return digest({
+        'prompt_version': PROMPT_VERSION,
+        'criteria': criteria,
+        'pdf_sha256': pdf_sha256 or '',
+        'model': cfg.get('model', 'qwen3.5:9b'),
+        'model_digest': model_digest,
+        'num_ctx': cfg.get('num_ctx', 32768),
+        'fast_num_predict': cfg.get(
+            'fast_num_predict',
+            cfg.get('repair_num_predict', 2048),
+        ),
+        'fallback_enabled': cfg.get(
+            'fallback_enabled',
+            cfg.get('repair_invalid_output', True),
+        ),
+        'fallback_think': cfg.get(
+            'fallback_think',
+            cfg.get('think', 'low'),
+        ),
+        'fallback_num_predict': cfg.get(
+            'fallback_num_predict',
+            cfg.get('num_predict', 8192),
+        ),
+        'max_split_depth': cfg.get('max_split_depth', 6),
+    })
+
+
 def parse_structured_content(content):
     """Parse strict JSON, allowing only a single surrounding Markdown fence."""
     if not isinstance(content, str):
