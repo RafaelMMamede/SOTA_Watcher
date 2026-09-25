@@ -109,6 +109,49 @@ class RestartableDiscoveryTests(unittest.TestCase):
                 self.assertEqual(resume_values[0], {})
                 self.assertEqual(resume_values[1]['cursor'], 'next')
 
+    def test_completed_run_is_reused_with_resume(self):
+        cfg = {
+            'sources': ['openalex'],
+            'from_publication_date': '2026-01-01',
+            'to_publication_date': '2026-09-25',
+        }
+        terms = protocol([
+            {'id': 'visual', 'queries': {'openalex': ['deepfake']}},
+        ])
+
+        def pages(*, query, resume=None, **kwargs):
+            yield {
+                'papers': [{
+                    'paper_id': 'openalex:W1',
+                    'openalex_id': 'W1',
+                    'title': 'Saved',
+                    'year': 2026,
+                }],
+                'complete': True,
+                'stop_reason': 'exhausted',
+                'checkpoint': {'retrieved': 1},
+            }
+
+        with tempfile.TemporaryDirectory() as folder:
+            with CorpusStore(Path(folder) / 'corpus.sqlite3') as store:
+                with patch.dict(
+                    'sources.restartable.ITERATORS',
+                    {'openalex': pages},
+                    clear=False,
+                ) as patched:
+                    first = discover_restartable(
+                        store, cfg, terms, resume=True
+                    )
+                    second = discover_restartable(
+                        store, cfg, terms, resume=True
+                    )
+
+                self.assertEqual(first['status'], 'complete')
+                self.assertEqual(second['status'], 'complete')
+                self.assertEqual(second['run_id'], first['run_id'])
+                self.assertTrue(second['tasks'][0]['skipped'])
+                self.assertEqual(len(store.all_papers()), 1)
+
     def test_one_provider_failure_preserves_other_results(self):
         cfg = {
             'sources': ['openalex', 'ieee'],
