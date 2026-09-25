@@ -403,6 +403,29 @@ def discover_restartable(store, config, protocol, *, resume=True):
     results = []
 
     for source, kwargs, queries in plan:
+        if not queries:
+            task = store.ensure_discovery_task(
+                run_id,
+                source,
+                "",
+                "",
+                "no_queries",
+                {"source": source, "reason": "no_queries_configured"},
+            )
+            store.mark_discovery_task_incomplete(
+                task["task_id"],
+                "No queries configured for enabled source.",
+            )
+            results.append({
+                "task_id": task["task_id"],
+                "source": source,
+                "search_topic": "",
+                "query": "",
+                "status": "incomplete",
+                "reason": "No queries configured for enabled source.",
+            })
+            continue
+
         if source == "arxiv":
             # Shared arXiv harvesting/matching is implemented separately so the
             # metadata window is downloaded once for all configured queries.
