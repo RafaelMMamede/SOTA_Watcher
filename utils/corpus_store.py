@@ -462,6 +462,22 @@ class CorpusStore:
         if commit:
             self.conn.commit()
 
+    def save_screened_paper(
+        self,
+        paper: dict,
+        screening_signature: str,
+    ) -> str:
+        """Atomically merge enriched metadata and its screening result/signature."""
+        with self.transaction():
+            corpus_id = self._upsert_paper_locked(paper)
+            self.update_processing(
+                corpus_id,
+                paper,
+                screening_signature=screening_signature,
+                commit=False,
+            )
+            return corpus_id
+
     def get_paper(self, corpus_id: str) -> dict | None:
         row = self.conn.execute(
             """SELECT p.metadata_json,
@@ -505,17 +521,21 @@ class CorpusStore:
         ).hexdigest()
         if resume:
             row = self.conn.execute(
-                """SELECT run_id FROM discovery_runs
-                   WHERE config_hash=? AND status IN ('running','incomplete')
+                """SELECT run_id, status FROM discovery_runs
+                   WHERE config_hash=?
+                     AND status IN ('running','incomplete','complete')
                    ORDER BY started_at DESC LIMIT 1""",
                 (config_hash,),
             ).fetchone()
             if row:
-                self.conn.execute(
-                    "UPDATE discovery_runs SET status='running', updated_at=? WHERE run_id=?",
-                    (utc_now(), row["run_id"]),
-                )
-                self.conn.commit()
+                if row["status"] != "complete":
+                    self.conn.execute(
+                        """UPDATE discovery_runs
+                           SET status='running', updated_at=?
+                           WHERE run_id=?""",
+                        (utc_now(), row["run_id"]),
+                    )
+                    self.conn.commit()
                 return row["run_id"]
 
         run_id = "d_" + uuid.uuid4().hex
@@ -764,9 +784,7 @@ class CorpusStore:
                 self.conn.execute(
                     """INSERT INTO arxiv_records
                        (harvest_key, arxiv_id, record_json)
-                       VALUES (?, ?, ?)
-                       ON CONFLICT(harvest_key, arxiv_id)
-                       DO UPDATE SET record_json=excluded.record_json""",
+                       VALUES (?, ?, ?)""",
                     (harvest_key, arxiv_id, _json(record)),
                 )
 
@@ -793,6 +811,21 @@ class CorpusStore:
                 (status, _json(checkpoint or {}), utc_now(), harvest_key),
             )
 
+    def mark_arxiv_harvest_error(self, harvest_key: str, exc: Exception):
+        current = self.get_arxiv_harvest(harvest_key)
+        checkpoint = dict(current["checkpoint"] if current else {})
+        checkpoint.update({
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+        })
+        self.conn.execute(
+            """UPDATE arxiv_harvests
+               SET status='error', checkpoint_json=?, updated_at=?
+               WHERE harvest_key=?""",
+            (_json(checkpoint), utc_now(), harvest_key),
+        )
+        self.conn.commit()
+
     def reset_arxiv_harvest(self, harvest_key: str):
         with self.transaction():
             self.conn.execute(
@@ -815,7 +848,7 @@ class CorpusStore:
             json.loads(row["record_json"])
             for row in self.conn.execute(
                 """SELECT record_json FROM arxiv_records
-                   WHERE harvest_key=? ORDER BY arxiv_id""",
+                   WHERE harvest_key=? ORDER BY rowid""",
                 (harvest_key,),
             )
         ]
