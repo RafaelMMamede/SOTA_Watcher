@@ -152,6 +152,49 @@ class RestartableDiscoveryTests(unittest.TestCase):
                 self.assertTrue(second['tasks'][0]['skipped'])
                 self.assertEqual(len(store.all_papers()), 1)
 
+    def test_eligibility_change_does_not_restart_completed_discovery(self):
+        cfg = {
+            'sources': ['openalex'],
+            'from_publication_date': '2026-01-01',
+            'to_publication_date': '2026-09-25',
+        }
+        terms = protocol([
+            {'id': 'visual', 'queries': {'openalex': ['deepfake']}},
+        ])
+
+        def pages(*, query, resume=None, **kwargs):
+            yield {
+                'papers': [],
+                'complete': True,
+                'stop_reason': 'exhausted',
+                'checkpoint': {'retrieved': 0},
+            }
+
+        with tempfile.TemporaryDirectory() as folder:
+            with CorpusStore(Path(folder) / 'corpus.sqlite3') as store:
+                with patch.dict(
+                    'sources.restartable.ITERATORS',
+                    {'openalex': pages},
+                    clear=False,
+                ):
+                    first = discover_restartable(
+                        store, cfg, terms, resume=True
+                    )
+                    changed = dict(terms)
+                    changed['eligibility'] = {
+                        'criteria': [{
+                            'id': 'different',
+                            'kind': 'inclusion',
+                            'description': 'Changed screening rule.',
+                        }],
+                    }
+                    second = discover_restartable(
+                        store, cfg, changed, resume=True
+                    )
+
+                self.assertEqual(second['run_id'], first['run_id'])
+                self.assertTrue(second['tasks'][0]['skipped'])
+
     def test_one_provider_failure_preserves_other_results(self):
         cfg = {
             'sources': ['openalex', 'ieee'],
