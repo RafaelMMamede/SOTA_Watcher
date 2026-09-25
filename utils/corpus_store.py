@@ -608,6 +608,16 @@ class CorpusStore:
                 ),
             )
 
+    def mark_discovery_task_partitioned(self, task_id: str, children: list[str]):
+        self.conn.execute(
+            """UPDATE discovery_tasks
+               SET status='partitioned', error_type='', error_message=?,
+                   updated_at=?
+               WHERE task_id=?""",
+            (_json({"children": children}), utc_now(), task_id),
+        )
+        self.conn.commit()
+
     def mark_discovery_task_error(self, task_id: str, exc: Exception):
         self.conn.execute(
             """UPDATE discovery_tasks
@@ -623,9 +633,10 @@ class CorpusStore:
             (run_id,),
         ).fetchall()
         statuses = [row["status"] for row in rows]
+        terminal_success = {"complete", "partitioned"}
         status = (
             "complete"
-            if statuses and all(value == "complete" for value in statuses)
+            if statuses and all(value in terminal_success for value in statuses)
             else "incomplete"
         )
         completed = utc_now() if status == "complete" else None
