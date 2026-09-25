@@ -213,7 +213,12 @@ class CorpusStore:
             return []
         marks = ",".join("?" for _ in keys)
         rows = self.conn.execute(
-            f"SELECT DISTINCT corpus_id FROM aliases WHERE alias_key IN ({marks})",
+            f"""SELECT a.corpus_id, MIN(p.created_at) AS created_at
+                FROM aliases a
+                JOIN papers p ON p.corpus_id=a.corpus_id
+                WHERE a.alias_key IN ({marks})
+                GROUP BY a.corpus_id
+                ORDER BY created_at, a.corpus_id""",
             keys,
         ).fetchall()
         return [row["corpus_id"] for row in rows]
