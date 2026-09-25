@@ -81,44 +81,79 @@ def validate_result(result, criteria, pages):
     texts = {p['page']: p['text'] for p in pages}
     norm = lambda x: re.sub(r'\s+', ' ', x).strip()
     typography_map = str.maketrans({
-        '\u2018': "'",  # left single quotation mark
-        '\u2019': "'",  # right single quotation mark
-        '\u201c': '"',  # left double quotation mark
-        '\u201d': '"',  # right double quotation mark
-        '\u00a0': ' ',  # non-breaking space
+        '\u2018': "'",
+        '\u2019': "'",
+        '\u201c': '"',
+        '\u201d': '"',
+        '\u00a0': ' ',
     })
 
     def typography_fold(value):
         return value.translate(typography_map)
 
     def unique_typographic_match(value, source):
-        """Return the source spelling when only safe typography differs."""
+        """Return source spelling when only safe typography differs."""
         folded_value = typography_fold(value)
         folded_source = typography_fold(source)
         if not folded_value:
             return None
 
-        matches = []
-        start = folded_source.find(folded_value)
-        while start != -1:
-            matches.append(source[start:start + len(value)])
-            start = folded_source.find(folded_value, start + 1)
+        positions = []
+        start_at = folded_source.find(folded_value)
+        while start_at != -1:
+            positions.append(start_at)
+            start_at = folded_source.find(folded_value, start_at + 1)
 
-        return matches[0] if len(matches) == 1 else None
+        if len(positions) != 1:
+            return None
+        start_at = positions[0]
+        return source[start_at:start_at + len(value)]
+
+    def direct_match(value, source):
+        if value and value in source:
+            return value
+        return unique_typographic_match(value, source)
 
     def canonical_quote(quote, page_text):
         """Resolve model evidence to one exact contiguous source excerpt."""
         value = norm(quote)
         source = norm(page_text)
-        if value and value in source:
-            return value
 
-        typographic = unique_typographic_match(value, source)
-        if typographic is not None:
-            return typographic
+        matched = direct_match(value, source)
+        if matched is not None:
+            return matched
 
         trimmed = re.sub(r'^(?:\.\.\.|…)\s*', '', value)
-        trimmed = re.sub(r'\s*(?:\.\.\.|…)
+        trimmed = re.sub(r'\s*(?:\.\.\.|…)$', '', trimmed).strip()
+        matched = direct_match(trimmed, source)
+        if matched is not None:
+            return matched
+
+        pieces = re.split(r'\s*(?:\.\.\.|…)\s*', trimmed)
+        if len(pieces) != 2:
+            return None
+        left, right = (part.strip() for part in pieces)
+        if len(left) < 12 or len(right) < 12:
+            return None
+
+        folded_source = typography_fold(source)
+        folded_left = typography_fold(left)
+        folded_right = typography_fold(right)
+        candidates = []
+        left_at = folded_source.find(folded_left)
+        while left_at != -1:
+            search_from = left_at + len(folded_left)
+            right_at = folded_source.find(folded_right, search_from)
+            while right_at != -1:
+                span = source[left_at:right_at + len(right)]
+                if len(span) <= 800:
+                    candidates.append(span)
+                right_at = folded_source.find(folded_right, right_at + 1)
+            left_at = folded_source.find(folded_left, left_at + 1)
+
+        unique = list(dict.fromkeys(candidates))
+        return unique[0] if len(unique) == 1 else None
+
     for row in rows:
         if (
             not isinstance(row, dict)
@@ -177,7 +212,6 @@ def validate_result(result, criteria, pages):
             item['quote'] = quote
 
     return rows
-
 
 def aggregate(results, criteria):
     combined=[]
