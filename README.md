@@ -179,8 +179,13 @@ every fragment. No text is silently dropped or reordered. A conservative UTF-8
 byte budget reserves space for instructions/schema and the larger reasoning
 fallback output; this is not a model-specific tokenizer. Each part uses the same
 criterion schema. Definite assessments require grounded evidence from a supplied
-PDF page. If a model gives the wrong page number but its quote resolves to exactly
-one supplied page, the validator canonicalizes the evidence to that page; ambiguous
+PDF page. Safe PDF/model typography differences are canonicalized for matching:
+curly single quotes may match straight apostrophes, curly double quotes may match
+straight double quotes, and non-breaking spaces are treated as ordinary whitespace.
+The match must be unique and the stored quote uses the source spelling. Content
+changes such as omitted punctuation, changed words, or paraphrases still fail.
+If a model gives the wrong page number but its quote resolves to exactly one
+supplied page, the validator canonicalizes the evidence to that page; ambiguous
 cross-page matches still fail. Invalid JSON, invented quotes, ambiguous evidence,
 missing criteria, transport failure and empty extraction stay uncertain; fallback
 length exhaustion is first handled by bounded adaptive splitting as described above.
