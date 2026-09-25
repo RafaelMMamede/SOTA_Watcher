@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import date
+from datetime import date, timedelta
 import hashlib
 import json
 
@@ -176,6 +176,17 @@ def _run_standard_task(
                 restarted_expired_cursor = True
                 continue
 
+            if source == "scopus" and "5,000" in str(exc):
+                return {
+                    "task_id": task["task_id"],
+                    "source": source,
+                    "search_topic": topic,
+                    "query": query,
+                    "status": "partition_required",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                }
+
             store.mark_discovery_task_error(task["task_id"], exc)
             return {
                 "task_id": task["task_id"],
@@ -198,6 +209,106 @@ def _run_standard_task(
         "records_committed": current["records_committed"],
         "restarted_expired_cursor": restarted_expired_cursor,
     }
+
+
+def _split_scopus_partition(kwargs):
+    lower_text = kwargs.get("from_publication_date")
+    upper_text = kwargs.get("to_publication_date")
+    if not lower_text and kwargs.get("start_year") is not None:
+        lower_text = f"{int(kwargs['start_year']):04d}-01-01"
+    if not upper_text and kwargs.get("end_year") is not None:
+        upper_text = f"{int(kwargs['end_year']):04d}-12-31"
+    if not lower_text or not upper_text:
+        return None
+
+    lower = date.fromisoformat(str(lower_text))
+    upper = date.fromisoformat(str(upper_text))
+    if lower >= upper:
+        return None
+
+    midpoint = lower + timedelta(days=(upper - lower).days // 2)
+    right_start = midpoint + timedelta(days=1)
+
+    left = deepcopy(kwargs)
+    right = deepcopy(kwargs)
+    left["from_publication_date"] = lower.isoformat()
+    left["to_publication_date"] = midpoint.isoformat()
+    left["start_year"] = lower.year
+    left["end_year"] = midpoint.year
+
+    right["from_publication_date"] = right_start.isoformat()
+    right["to_publication_date"] = upper.isoformat()
+    right["start_year"] = right_start.year
+    right["end_year"] = upper.year
+    return left, right
+
+
+def _run_scopus_partitioned(
+    store,
+    *,
+    run_id,
+    topic,
+    query,
+    kwargs,
+    resume,
+):
+    result = _run_standard_task(
+        store,
+        run_id=run_id,
+        source="scopus",
+        topic=topic,
+        query=query,
+        kwargs=kwargs,
+        resume=resume,
+    )
+    if result["status"] != "partition_required":
+        return [result]
+
+    children = _split_scopus_partition(kwargs)
+    if children is None:
+        exc = RuntimeError(
+            "Scopus offset pagination still exceeds 5,000 source records "
+            "at the minimum one-day partition; coverage remains incomplete."
+        )
+        store.mark_discovery_task_error(result["task_id"], exc)
+        result.update({
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+        })
+        return [result]
+
+    left, right = children
+    left_results = _run_scopus_partitioned(
+        store,
+        run_id=run_id,
+        topic=topic,
+        query=query,
+        kwargs=left,
+        resume=resume,
+    )
+    right_results = _run_scopus_partitioned(
+        store,
+        run_id=run_id,
+        topic=topic,
+        query=query,
+        kwargs=right,
+        resume=resume,
+    )
+    child_ids = [
+        left_results[0]["task_id"],
+        right_results[0]["task_id"],
+    ]
+    store.mark_discovery_task_partitioned(result["task_id"], child_ids)
+    result.update({
+        "status": "partitioned",
+        "children": child_ids,
+        "partition_bounds": {
+            "from": kwargs.get("from_publication_date"),
+            "to": kwargs.get("to_publication_date"),
+        },
+    })
+    return [result, *left_results, *right_results]
 
 
 def discover_restartable(store, config, protocol, *, resume=True):
@@ -230,17 +341,29 @@ def discover_restartable(store, config, protocol, *, resume=True):
             continue
 
         for topic, query in queries:
-            results.append(
-                _run_standard_task(
-                    store,
-                    run_id=run_id,
-                    source=source,
-                    topic=topic,
-                    query=query,
-                    kwargs=kwargs,
-                    resume=resume,
+            if source == "scopus":
+                results.extend(
+                    _run_scopus_partitioned(
+                        store,
+                        run_id=run_id,
+                        topic=topic,
+                        query=query,
+                        kwargs=kwargs,
+                        resume=resume,
+                    )
                 )
-            )
+            else:
+                results.append(
+                    _run_standard_task(
+                        store,
+                        run_id=run_id,
+                        source=source,
+                        topic=topic,
+                        query=query,
+                        kwargs=kwargs,
+                        resume=resume,
+                    )
+                )
 
     status = store.finish_discovery_run(run_id)
     return {
