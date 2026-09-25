@@ -536,15 +536,20 @@ class CorpusStore:
         return data
 
     def reset_discovery_task(self, task_id: str):
-        self.conn.execute(
-            """UPDATE discovery_tasks
-               SET status='pending', checkpoint_json='{}',
-                   pages_committed=0, records_committed=0,
-                   error_type='', error_message='', updated_at=?
-               WHERE task_id=?""",
-            (utc_now(), task_id),
-        )
-        self.conn.commit()
+        """Restart one partition while retaining papers already merged globally."""
+        with self.transaction():
+            self.conn.execute(
+                "DELETE FROM discovery_pages WHERE task_id=?",
+                (task_id,),
+            )
+            self.conn.execute(
+                """UPDATE discovery_tasks
+                   SET status='pending', checkpoint_json='{}',
+                       pages_committed=0, records_committed=0,
+                       error_type='', error_message='', updated_at=?
+                   WHERE task_id=?""",
+                (utc_now(), task_id),
+            )
 
     def commit_discovery_page(
         self,
