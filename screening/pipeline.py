@@ -165,6 +165,18 @@ def screen_papers(papers, protocol, config, audit=None):
                 active_criteria, inactive_criteria, screening_topics = (
                     _criteria_for_paper(criteria, paper)
                 )
+                paper["screening_search_topics"] = screening_topics
+                paper["screening_inactive_criteria"] = inactive_criteria
+                write_json(
+                    folder / "screening_applicability.json",
+                    {
+                        "search_topics": screening_topics,
+                        "active_criteria": [
+                            criterion["id"] for criterion in active_criteria
+                        ],
+                        "inactive_criteria": inactive_criteria,
+                    },
+                )
                 if not active_criteria:
                     raise ValueError(
                         "No eligibility criteria apply to this paper's "
@@ -176,8 +188,6 @@ def screen_papers(papers, protocol, config, audit=None):
                     cfg,
                     folder,
                 )
-                screened["screening_search_topics"] = screening_topics
-                screened["screening_inactive_criteria"] = inactive_criteria
                 paper.update(screened)
 
         except Exception as exc:
