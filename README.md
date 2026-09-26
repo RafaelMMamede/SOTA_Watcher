@@ -175,6 +175,21 @@ Run metadata eligibility after discovery and before PDF retrieval:
 python sota_watcher.py screen-metadata --limit 100
 ```
 
+Before scaling a new screening protocol, a deterministic representative pilot can
+be drawn from the pending corpus:
+
+```bash
+python sota_watcher.py screen-metadata --stratified-sample 60 --seed 42
+```
+
+The pilot uses mutually exclusive strata defined by the paper's exact
+search-family combination and source combination, then allocates the requested
+sample proportionally across those strata. Sampling is reproducible. The selected
+corpus IDs, titles, years, topic/source memberships, population sizes and quotas
+are saved under `metadata_screening/samples/`. Re-running the same sample size
+and seed reuses that manifest, so an interrupted pilot cannot silently draw
+replacement papers from the remaining queue.
+
 This stage uses only the saved title and abstract plus the provenance-aware
 eligibility criteria. It is deliberately high recall: missing detail is
 `uncertain`, not evidence for exclusion. A paper is excluded at this stage only
