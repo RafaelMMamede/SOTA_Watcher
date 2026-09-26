@@ -21,6 +21,13 @@ def review_counts(raw, unique, outcomes):
         'query_outcomes':outcomes,
         'all_configured_queries_exhausted':bool(outcomes) and all(o.get('complete') is True for o in outcomes),
         'historical_scope_complete':bool(outcomes) and all(o.get('complete') is True and o.get('historical_scope_complete',True) for o in outcomes),
+        'metadata_screening_status_counts':dict(Counter(
+            p.get('metadata_screening_status','not_screened') for p in unique
+        )),
+        'metadata_screening_decisions':dict(Counter(
+            p.get('metadata_screening_decision','') for p in unique
+            if p.get('metadata_screening_decision')
+        )),
         'fulltext_status_counts':dict(Counter(p.get('fulltext_status','not_requested') for p in unique)),
         'fulltext_resolver_counts':dict(Counter(p.get('fulltext_resolver','unresolved') or 'unresolved' for p in unique)),
         'fulltext_manual_candidate_records':sum(bool(decode(p.get('fulltext_manual_candidates'),[])) for p in unique),
@@ -50,7 +57,8 @@ def summary_markdown(papers, counts=None):
         decorate(p)
         lines.extend([f"## {index}. {p.get('title') or '[Untitled record]'}",'',
                       f"Decision: **{p['effective_decision']}** ({p['decision_origin']})",'',
-                      f"Screening: {p.get('eligibility_status','not_screened')}; full text: {p.get('fulltext_status','not_requested')}",'',
+                      f"Metadata screening: {p.get('metadata_screening_status','not_screened')} ({p.get('metadata_screening_decision','') or 'pending'})",'',
+                      f"Full-text screening: {p.get('eligibility_status','not_screened')}; full text: {p.get('fulltext_status','not_requested')}",'',
                       f"Full-text resolver: {p.get('fulltext_resolver','') or 'none'}",''])
         for key in ('doi','url','manual_reason','notes','eligibility_reason','screening_artifact'):
             if present(p.get(key)):
