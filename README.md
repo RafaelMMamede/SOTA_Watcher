@@ -37,7 +37,10 @@ python sota_watcher.py discover --resume
 # Inspect discovery, screening, full-text and human-review state.
 python sota_watcher.py status
 
-# Process only the next 100 papers that actually require screening.
+# High-recall title/abstract eligibility screening.
+python sota_watcher.py screen-metadata --limit 100
+
+# Then process only metadata include/uncertain papers at full text.
 python sota_watcher.py screen --limit 100
 
 # Retry only prior failures/unavailable full text when desired.
@@ -164,13 +167,45 @@ guaranteed for a changing remote repository. Missing v1 dates fail the harvest.
 A result/page cap is explicitly incomplete; matching totals are unknown until
 local harvesting ends. Capped OAI results are in harvest order, not globally ranked.
 
+## Title and abstract screening
+
+Run metadata eligibility after discovery and before PDF retrieval:
+
+```bash
+python sota_watcher.py screen-metadata --limit 100
+```
+
+This stage uses only the saved title and abstract plus the provenance-aware
+eligibility criteria. It is deliberately high recall: missing detail is
+`uncertain`, not evidence for exclusion. A paper is excluded at this stage only
+when the title/abstract explicitly demonstrates a failed inclusion criterion or a
+met exclusion criterion. Both `include` and `uncertain` advance to full-text
+screening.
+
+Metadata assessments have independent SQLite state, artifacts and signatures.
+Successive batches skip valid completed assessments. A changed title/abstract,
+model/prompt/settings, eligibility criteria, or search-family provenance makes the
+old result stale and returns the paper to the metadata queue. Retry prior metadata
+errors explicitly:
+
+```bash
+python sota_watcher.py screen-metadata --limit 100 --retry error
+```
+
+The default full-text queue requires a current metadata assessment
+(`screening.require_metadata_screening: true`). Clear metadata exclusions do not
+trigger PDF resolution/download. A human `manual_decision: include` can still
+advance a record, while a human `manual_decision: exclude` blocks full-text work.
+
 ## Full-text screening
 
 Review the eligibility criteria and ensure your configured Ollama model is
-installed and the server is running. The standalone `screen` command enables
-screening for its selected batch; `screening.enabled` remains relevant to the
-legacy no-subcommand workflow. The initial model setting is `qwen3.5:9b` with a
-32K context. Screening uses a fast-first pipeline: a no-thinking 2K primary pass
+installed and the server is running. By default, the standalone `screen` command
+selects only papers whose current title/abstract assessment is `include` or
+`uncertain`; metadata `exclude` records are skipped before PDF retrieval.
+The command enables full-text screening for its selected batch;
+`screening.enabled` remains relevant to the legacy no-subcommand workflow. The
+initial model setting is `qwen3.5:9b` with a 32K context. Screening uses a fast-first pipeline: a no-thinking 2K primary pass
 receives the JSON schema in the prompt and is checked locally; only invalid fast
 output is retried with Ollama structured output, low thinking, and an 8K fallback
 generation budget. A single surrounding Markdown JSON fence is tolerated before
