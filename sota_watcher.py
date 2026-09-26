@@ -120,7 +120,7 @@ def command_status(config):
 def command_screen_metadata(args, config, terms):
     retry_error = args.retry == "error"
     limit = args.limit
-    if limit is None:
+    if limit is None and args.stratified_sample is None:
         limit = config.get('metadata_screening', {}).get(
             'max_papers_per_run'
         )
@@ -134,6 +134,8 @@ def command_screen_metadata(args, config, terms):
             config,
             limit=limit,
             retry_error=retry_error,
+            stratified_sample=args.stratified_sample,
+            sample_seed=args.seed,
         )
     print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
 
@@ -187,7 +189,23 @@ def build_parser():
         'screen-metadata',
         help='Screen titles/abstracts before full-text retrieval.',
     )
-    metadata.add_argument('--limit', type=int, default=None)
+    metadata_batch = metadata.add_mutually_exclusive_group()
+    metadata_batch.add_argument('--limit', type=int, default=None)
+    metadata_batch.add_argument(
+        '--stratified-sample',
+        type=int,
+        default=None,
+        help=(
+            'Screen a deterministic proportional sample stratified by '
+            'search-family and source combinations.'
+        ),
+    )
+    metadata.add_argument(
+        '--seed',
+        type=int,
+        default=42,
+        help='Random seed used by --stratified-sample (default: 42).',
+    )
     metadata.add_argument(
         '--retry',
         choices=['error'],
