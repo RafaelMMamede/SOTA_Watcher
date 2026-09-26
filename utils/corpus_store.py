@@ -951,11 +951,21 @@ class CorpusStore:
                       COALESCE(SUM(records_committed),0) AS records
                FROM discovery_tasks"""
         ).fetchone()
+        records_by_source = {
+            row["source"]: row["records"]
+            for row in self.conn.execute(
+                """SELECT source, COALESCE(SUM(records_committed),0) AS records
+                   FROM discovery_tasks
+                   GROUP BY source
+                   ORDER BY source"""
+            )
+        }
         return {
             "runs": run_counts,
             "tasks": task_counts,
             "pages_committed": totals["pages"],
             "records_committed": totals["records"],
+            "records_committed_by_source": records_by_source,
             "arxiv_harvests": harvest_counts,
         }
 
@@ -1198,8 +1208,20 @@ class CorpusStore:
             for p in papers
             if p.get("metadata_screening_decision")
         )
+        papers_by_source = Counter()
+        for paper in papers:
+            sources = decode(paper.get("sources"), [])
+            if not sources and present(paper.get("source")):
+                sources = [paper.get("source")]
+            for source in set(
+                str(value).strip()
+                for value in sources
+                if present(value)
+            ):
+                papers_by_source[source] += 1
         return {
             "papers": len(papers),
+            "unique_papers_by_source": dict(sorted(papers_by_source.items())),
             "metadata_screening_status": dict(metadata_screening),
             "metadata_screening_decisions": dict(metadata_decisions),
             "metadata_screening_pending_unattempted": (
