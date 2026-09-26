@@ -1208,6 +1208,16 @@ class CorpusStore:
             "metadata_screening_retry_required": (
                 metadata_screening.get("error", 0)
             ),
+            "fulltext_gate": {
+                "eligible_after_metadata": (
+                    metadata_decisions.get("include", 0)
+                    + metadata_decisions.get("uncertain", 0)
+                ),
+                "excluded_after_metadata": metadata_decisions.get("exclude", 0),
+                "awaiting_metadata": (
+                    len(papers) - sum(metadata_decisions.values())
+                ),
+            },
             "last_metadata_screening_batch": (
                 self.latest_metadata_screening_batch()
             ),
