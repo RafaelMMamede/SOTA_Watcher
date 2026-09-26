@@ -51,7 +51,18 @@ def get_model_digest(cfg):
     model = cfg.get('model', 'qwen3.5:9b')
     base = cfg.get('base_url', 'http://localhost:11434').rstrip('/')
     timeout = cfg.get('timeout_seconds', 300)
-    model_digest = get_model_digest(cfg)
+    tags = requests.get(base + '/api/tags', timeout=timeout)
+    tags.raise_for_status()
+    candidates = [
+        item for item in tags.json().get('models', [])
+        if item.get('name') in {model, model + ':latest'}
+        or item.get('model') == model
+    ]
+    model_digest = candidates[0].get('digest') if candidates else None
+    if not model_digest:
+        raise ValueError(
+            'Cannot identify installed model digest; pull the configured model first.'
+        )
     return model_digest
 
 
