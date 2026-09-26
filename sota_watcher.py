@@ -119,6 +119,11 @@ def command_status(config):
 
 def command_screen_metadata(args, config, terms):
     retry_error = args.retry == "error"
+    limit = args.limit
+    if limit is None:
+        limit = config.get('metadata_screening', {}).get(
+            'max_papers_per_run'
+        )
     with CorpusStore(_store_path(config)) as store:
         workbook = Path(config.get('sota_table_path', 'output/sota_table.xlsx'))
         if workbook.exists():
@@ -127,7 +132,7 @@ def command_screen_metadata(args, config, terms):
             store,
             terms,
             config,
-            limit=args.limit,
+            limit=limit,
             retry_error=retry_error,
         )
     print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
