@@ -223,6 +223,7 @@ def metadata_screening_signature(paper, criteria, cfg, model_digest):
         "fallback_enabled": cfg.get("fallback_enabled", True),
         "fallback_think": cfg.get("fallback_think", "low"),
         "fallback_num_predict": cfg.get("fallback_num_predict", 3072),
+        "repair_num_predict": cfg.get("repair_num_predict", 1600),
     })
 
 
@@ -239,6 +240,7 @@ def screen_metadata_paper(paper, criteria, cfg, folder, model_digest):
     fallback_enabled = cfg.get("fallback_enabled", True)
     fallback_think = cfg.get("fallback_think", "low")
     fallback_output = cfg.get("fallback_num_predict", 3072)
+    repair_output = cfg.get("repair_num_predict", 1600)
 
     if (
         type(ctx) is not int
@@ -250,6 +252,9 @@ def screen_metadata_paper(paper, criteria, cfg, folder, model_digest):
         or type(fallback_output) is not int
         or fallback_output < 256
         or fallback_output >= ctx
+        or type(repair_output) is not int
+        or repair_output < 256
+        or repair_output >= ctx
     ):
         raise ValueError("Invalid metadata screening model settings.")
 
@@ -275,6 +280,7 @@ def screen_metadata_paper(paper, criteria, cfg, folder, model_digest):
         "fallback_enabled": fallback_enabled,
         "fallback_think": fallback_think,
         "fallback_num_predict": fallback_output,
+        "repair_num_predict": repair_output,
     }
 
     target = Path(folder) / identity["signature"]
@@ -368,15 +374,65 @@ def screen_metadata_paper(paper, criteria, cfg, folder, model_digest):
         fallback_data = call(fallback_path, fallback_payload)
         try:
             rows = parse_response(fallback_data)
+            mode = "fallback"
         except (KeyError, TypeError, ValueError) as fallback_exc:
-            invalid = target / "fallback_invalid.json"
+            is_length = fallback_data.get("done_reason") == "length"
+            failed_fallback = target / (
+                "fallback_incomplete.json"
+                if is_length
+                else "fallback_invalid.json"
+            )
             if fallback_path.exists():
-                fallback_path.replace(invalid)
-            raise ValueError(
-                "Metadata screening validation failed after fallback: "
-                f"{fallback_exc}"
-            ) from fallback_exc
-        mode = "fallback"
+                fallback_path.replace(failed_fallback)
+
+            # Metadata inputs are short. If low-thinking fallback spends its
+            # entire budget on reasoning, make one final schema-constrained
+            # no-thinking repair rather than increasing the reasoning budget.
+            if not is_length:
+                raise ValueError(
+                    "Metadata screening validation failed after fallback: "
+                    f"{fallback_exc}"
+                ) from fallback_exc
+
+            repair_payload = {
+                "model": model,
+                "stream": False,
+                "think": False,
+                "format": SCHEMA,
+                "options": {
+                    "temperature": 0,
+                    "num_ctx": ctx,
+                    "num_predict": repair_output,
+                },
+                "messages": [
+                    {"role": "system", "content": SYSTEM},
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            user_payload,
+                            ensure_ascii=False,
+                        ),
+                    },
+                ],
+            }
+            write_json(target / "repair_request.json", repair_payload)
+            repair_path = target / "repair_response.json"
+            repair_data = call(repair_path, repair_payload)
+            try:
+                rows = parse_response(repair_data)
+            except (KeyError, TypeError, ValueError) as repair_exc:
+                failed_repair = target / (
+                    "repair_incomplete.json"
+                    if repair_data.get("done_reason") == "length"
+                    else "repair_invalid.json"
+                )
+                if repair_path.exists():
+                    repair_path.replace(failed_repair)
+                raise ValueError(
+                    "Metadata screening validation failed after "
+                    f"length-repair: {repair_exc}"
+                ) from repair_exc
+            mode = "repair"
 
     decision, combined = metadata_decision(rows, criteria)
     result = {
