@@ -13,6 +13,7 @@ from screening.metadata_queue import (
     metadata_config,
     screen_saved_metadata,
     select_for_metadata_screening,
+    stratified_metadata_sample,
 )
 from screening.pipeline import _criteria_for_paper
 from screening.queue import select_for_screening
@@ -306,6 +307,123 @@ class MetadataScreeningTests(unittest.TestCase):
 
                 self.assertEqual(len(selected), 1)
                 self.assertEqual(summary.stale, 1)
+
+    def test_stratified_sample_is_deterministic_and_proportional(self):
+        def candidate(index, topics, sources):
+            paper = {
+                "corpus_id": f"p_{index}",
+                "title": f"Paper {index}",
+                "sources": sources,
+            }
+            return (paper, [], [], topics, "model-a", f"sig-{index}")
+
+        candidates = []
+        for index in range(8):
+            candidates.append(candidate(
+                index,
+                ["visual_forgery_detection"],
+                ["openalex"],
+            ))
+        for index in range(8, 12):
+            candidates.append(candidate(
+                index,
+                ["adversarial_vision"],
+                ["scopus"],
+            ))
+
+        first, strata = stratified_metadata_sample(
+            candidates,
+            sample_size=6,
+            seed=42,
+        )
+        second, _ = stratified_metadata_sample(
+            candidates,
+            sample_size=6,
+            seed=42,
+        )
+
+        self.assertEqual(
+            [row[0]["corpus_id"] for row in first],
+            [row[0]["corpus_id"] for row in second],
+        )
+        self.assertEqual(sum(v["selected"] for v in strata.values()), 6)
+        selected_by_topic = {}
+        for row in first:
+            key = tuple(row[3])
+            selected_by_topic[key] = selected_by_topic.get(key, 0) + 1
+        self.assertEqual(
+            selected_by_topic[("visual_forgery_detection",)],
+            4,
+        )
+        self.assertEqual(
+            selected_by_topic[("adversarial_vision",)],
+            2,
+        )
+
+    def test_stratified_sample_manifest_is_reused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cfg = {
+                "output_dir": folder,
+                "screening": {"model": "qwen3.5:9b"},
+                "metadata_screening": {
+                    "artifacts_dir": str(Path(folder) / "metadata"),
+                },
+            }
+            with CorpusStore(Path(folder) / "corpus.sqlite3") as store:
+                for index in range(6):
+                    store.upsert_paper({
+                        "paper_id": f"openalex:S{index}",
+                        "openalex_id": f"S{index}",
+                        "title": f"Paper {index}",
+                        "abstract": "Visual research.",
+                        "year": 2026,
+                        "source": "openalex",
+                        "search_topic": "visual_forgery_detection",
+                    })
+
+                with patch(
+                    "screening.metadata_queue.get_model_digest",
+                    return_value="model-a",
+                ), patch(
+                    "screening.metadata_queue.screen_metadata_paper",
+                    side_effect=lambda *args, **kwargs: metadata_result("include"),
+                ):
+                    first = screen_saved_metadata(
+                        store,
+                        PROTOCOL,
+                        cfg,
+                        stratified_sample=3,
+                        sample_seed=7,
+                    )
+
+                manifest = Path(first.sample_manifest)
+                selected_ids = {
+                    row["corpus_id"]
+                    for row in __import__("json").loads(
+                        manifest.read_text(encoding="utf-8")
+                    )["papers"]
+                }
+                self.assertEqual(len(selected_ids), 3)
+
+                # The same sample manifest remains fixed after those records
+                # have been screened; it does not draw replacements.
+                with patch(
+                    "screening.metadata_queue.get_model_digest",
+                    return_value="model-a",
+                ), patch(
+                    "screening.metadata_queue.screen_metadata_paper",
+                    side_effect=lambda *args, **kwargs: metadata_result("include"),
+                ):
+                    second = screen_saved_metadata(
+                        store,
+                        PROTOCOL,
+                        cfg,
+                        stratified_sample=3,
+                        sample_seed=7,
+                    )
+
+                self.assertEqual(second.selected, 0)
+                self.assertEqual(Path(second.sample_manifest), manifest)
 
     @patch("screening.metadata.requests.post")
     def test_length_fallback_uses_no_thinking_structured_repair(self, post):
