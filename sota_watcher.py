@@ -15,6 +15,7 @@ from utils.protocol import validate_protocol
 from utils.corpus_store import CorpusStore
 from screening import screen_papers
 from screening.queue import screen_saved_corpus
+from screening.metadata_queue import screen_saved_metadata
 from utils.reporting import decorate, review_counts, summary_markdown
 from fulltext._common import read_json
 
@@ -116,6 +117,22 @@ def command_status(config):
     print(json.dumps(status, indent=2, sort_keys=True))
 
 
+def command_screen_metadata(args, config, terms):
+    retry_error = args.retry == "error"
+    with CorpusStore(_store_path(config)) as store:
+        workbook = Path(config.get('sota_table_path', 'output/sota_table.xlsx'))
+        if workbook.exists():
+            store.import_workbook(workbook, include_processing=False)
+        summary = screen_saved_metadata(
+            store,
+            terms,
+            config,
+            limit=args.limit,
+            retry_error=retry_error,
+        )
+    print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
+
+
 def command_screen(args, config, terms):
     retry = []
     if args.retry:
@@ -160,6 +177,18 @@ def build_parser():
 
     discover = sub.add_parser('discover', help='Run discovery into the persistent corpus.')
     discover.add_argument('--resume', action='store_true', help='Resume matching saved discovery work.')
+
+    metadata = sub.add_parser(
+        'screen-metadata',
+        help='Screen titles/abstracts before full-text retrieval.',
+    )
+    metadata.add_argument('--limit', type=int, default=None)
+    metadata.add_argument(
+        '--retry',
+        choices=['error'],
+        default=None,
+        help='Retry prior metadata-screening errors.',
+    )
 
     screen = sub.add_parser('screen', help='Screen the next pending saved candidates.')
     screen.add_argument('--limit', type=int, default=None)
@@ -206,6 +235,8 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == 'discover':
         command_discover(args, config, _load_protocol(config))
+    elif args.command == 'screen-metadata':
+        command_screen_metadata(args, config, _load_protocol(config))
     elif args.command == 'screen':
         command_screen(args, config, _load_protocol(config))
     elif args.command == 'status':
