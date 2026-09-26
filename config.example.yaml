@@ -45,6 +45,22 @@ fulltext_resolution:
   timeout_seconds: 20
   max_retries: 2
 
+metadata_screening:
+  # Standalone title/abstract screening is run with:
+  #   python sota_watcher.py screen-metadata --limit N
+  # It is intentionally high recall: uncertain records advance to full text.
+  model: qwen3.5:9b
+  base_url: http://localhost:11434
+  num_ctx: 8192
+  fast_num_predict: 1200
+  fallback_enabled: true
+  fallback_think: low
+  fallback_num_predict: 3072
+  timeout_seconds: 180
+  max_papers_per_run: null
+  artifacts_dir: output/metadata_screening
+  force: false
+
 screening:
   # Enable after reviewing eligibility criteria and testing local Ollama.
   enabled: false
@@ -63,6 +79,8 @@ screening:
   # repair_invalid_output, and repair_num_predict.
   timeout_seconds: 300
   max_papers_per_run: null
+  # By default, only metadata include/uncertain records reach PDF retrieval.
+  require_metadata_screening: true
   papers_dir: output/papers
   # Re-query OA resolvers even if resolution.json exists.
   refresh_resolution: false
