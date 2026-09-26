@@ -18,6 +18,7 @@ from utils.io import load_existing_table, save_table
 
 HUMAN_FIELDS = ("manual_decision", "manual_reason", "notes")
 PROCESS_PREFIXES = ("eligibility_", "screening_", "fulltext_", "pdf_")
+METADATA_SCREENING_PREFIXES = ("metadata_screening_",)
 DERIVED_FIELDS = {"effective_decision", "decision_origin"}
 
 
@@ -36,6 +37,7 @@ def _metadata_only(paper: dict) -> dict:
         if key not in HUMAN_FIELDS
         and key not in DERIVED_FIELDS
         and not key.startswith(PROCESS_PREFIXES)
+        and not key.startswith(METADATA_SCREENING_PREFIXES)
         and key != "corpus_id"
     }
 
@@ -45,6 +47,14 @@ def _processing_bundle(paper: dict) -> dict:
         key: value
         for key, value in paper.items()
         if key.startswith(PROCESS_PREFIXES)
+    }
+
+
+def _metadata_screening_bundle(paper: dict) -> dict:
+    return {
+        key: value
+        for key, value in paper.items()
+        if key.startswith(METADATA_SCREENING_PREFIXES)
     }
 
 
@@ -127,6 +137,32 @@ class CorpusStore:
                 completed INTEGER NOT NULL,
                 errors INTEGER NOT NULL,
                 unavailable INTEGER NOT NULL,
+                remaining_pending INTEGER NOT NULL,
+                elapsed_seconds REAL NOT NULL,
+                papers_per_minute REAL NOT NULL,
+                estimated_remaining_minutes REAL
+            );
+            CREATE TABLE IF NOT EXISTS metadata_screening (
+                corpus_id TEXT PRIMARY KEY REFERENCES papers(corpus_id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'not_screened',
+                decision TEXT NOT NULL DEFAULT '',
+                signature TEXT NOT NULL DEFAULT '',
+                result_json TEXT NOT NULL DEFAULT '{}',
+                error_type TEXT NOT NULL DEFAULT '',
+                error_message TEXT NOT NULL DEFAULT '',
+                artifact_folder TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS metadata_screening_batches (
+                batch_id TEXT PRIMARY KEY,
+                started_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL,
+                selected INTEGER NOT NULL,
+                completed INTEGER NOT NULL,
+                included INTEGER NOT NULL,
+                excluded INTEGER NOT NULL,
+                uncertain INTEGER NOT NULL,
+                errors INTEGER NOT NULL,
                 remaining_pending INTEGER NOT NULL,
                 elapsed_seconds REAL NOT NULL,
                 papers_per_minute REAL NOT NULL,
