@@ -377,6 +377,43 @@ class CorpusStore:
                         (target, *(source_processing[col] for col in columns)),
                     )
 
+            target_metadata_screening = self.conn.execute(
+                "SELECT * FROM metadata_screening WHERE corpus_id=?", (target,)
+            ).fetchone()
+            source_metadata_screening = self.conn.execute(
+                "SELECT * FROM metadata_screening WHERE corpus_id=?", (source,)
+            ).fetchone()
+            if source_metadata_screening:
+                columns = (
+                    "status", "decision", "signature", "result_json",
+                    "error_type", "error_message", "artifact_folder", "updated_at"
+                )
+                use_source = (
+                    target_metadata_screening is None
+                    or str(source_metadata_screening["updated_at"])
+                    > str(target_metadata_screening["updated_at"])
+                )
+                if use_source:
+                    self.conn.execute(
+                        """INSERT INTO metadata_screening
+                           (corpus_id, status, decision, signature, result_json,
+                            error_type, error_message, artifact_folder, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           ON CONFLICT(corpus_id) DO UPDATE SET
+                             status=excluded.status,
+                             decision=excluded.decision,
+                             signature=excluded.signature,
+                             result_json=excluded.result_json,
+                             error_type=excluded.error_type,
+                             error_message=excluded.error_message,
+                             artifact_folder=excluded.artifact_folder,
+                             updated_at=excluded.updated_at""",
+                        (
+                            target,
+                            *(source_metadata_screening[col] for col in columns),
+                        ),
+                    )
+
             self.conn.execute("DELETE FROM papers WHERE corpus_id=?", (source,))
 
     def _insert_provenance(self, corpus_id: str, paper: dict):
@@ -448,6 +485,8 @@ class CorpusStore:
             )
         if _processing_bundle(incoming):
             self.update_processing(corpus_id, incoming, commit=False)
+        if _metadata_screening_bundle(incoming):
+            self.update_metadata_screening(corpus_id, incoming, commit=False)
 
         return corpus_id
 
@@ -525,6 +564,67 @@ class CorpusStore:
         if commit:
             self.conn.commit()
 
+    def update_metadata_screening(
+        self,
+        corpus_id: str,
+        paper: dict,
+        metadata_screening_signature: str | None = None,
+        *,
+        commit: bool = True,
+    ):
+        bundle = _metadata_screening_bundle(paper)
+        status = (
+            paper.get("metadata_screening_status", "not_screened")
+            or "not_screened"
+        )
+        decision = paper.get("metadata_screening_decision", "") or ""
+        self.conn.execute(
+            """INSERT INTO metadata_screening
+               (corpus_id, status, decision, signature, result_json,
+                error_type, error_message, artifact_folder, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(corpus_id) DO UPDATE SET
+                 status=excluded.status,
+                 decision=excluded.decision,
+                 signature=excluded.signature,
+                 result_json=excluded.result_json,
+                 error_type=excluded.error_type,
+                 error_message=excluded.error_message,
+                 artifact_folder=excluded.artifact_folder,
+                 updated_at=excluded.updated_at""",
+            (
+                corpus_id,
+                status,
+                decision,
+                metadata_screening_signature
+                or paper.get("metadata_screening_signature", "")
+                or "",
+                _json(bundle),
+                paper.get("metadata_screening_error_type", "") or "",
+                paper.get("metadata_screening_error_message", "") or "",
+                paper.get("metadata_screening_artifact", "") or "",
+                utc_now(),
+            ),
+        )
+        if commit:
+            self.conn.commit()
+
+    def save_metadata_screened_paper(
+        self,
+        paper: dict,
+        metadata_screening_signature: str,
+    ) -> str:
+        """Atomically persist one title/abstract screening assessment."""
+        with self.transaction():
+            corpus_id = self._upsert_paper_locked(paper)
+            self.update_metadata_screening(
+                corpus_id,
+                paper,
+                metadata_screening_signature=metadata_screening_signature,
+                commit=False,
+            )
+            return corpus_id
+
     def save_screened_paper(
         self,
         paper: dict,
@@ -545,10 +645,13 @@ class CorpusStore:
         row = self.conn.execute(
             """SELECT p.metadata_json,
                       h.manual_decision, h.manual_reason, h.notes,
-                      x.result_json, x.screening_signature
+                      x.result_json, x.screening_signature,
+                      m.result_json AS metadata_screening_result_json,
+                      m.signature AS metadata_screening_signature
                FROM papers p
                LEFT JOIN human_review h USING(corpus_id)
                LEFT JOIN processing x USING(corpus_id)
+               LEFT JOIN metadata_screening m USING(corpus_id)
                WHERE p.corpus_id=?""",
             (corpus_id,),
         ).fetchone()
@@ -558,6 +661,14 @@ class CorpusStore:
         paper["corpus_id"] = corpus_id
         result = json.loads(row["result_json"] or "{}")
         paper.update(result)
+        metadata_result = json.loads(
+            row["metadata_screening_result_json"] or "{}"
+        )
+        paper.update(metadata_result)
+        if row["metadata_screening_signature"]:
+            paper["metadata_screening_signature"] = (
+                row["metadata_screening_signature"]
+            )
         for field in HUMAN_FIELDS:
             paper[field] = row[field] or ""
         paper["screening_signature"] = row["screening_signature"] or ""
