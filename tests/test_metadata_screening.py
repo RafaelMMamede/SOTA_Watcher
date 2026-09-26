@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 from screening.metadata import (
     metadata_decision,
     metadata_screening_signature,
+    screen_metadata_paper,
     validate_metadata_result,
 )
 from screening.metadata_queue import (
@@ -305,6 +306,75 @@ class MetadataScreeningTests(unittest.TestCase):
 
                 self.assertEqual(len(selected), 1)
                 self.assertEqual(summary.stale, 1)
+
+    @patch("screening.metadata.requests.post")
+    def test_length_fallback_uses_no_thinking_structured_repair(self, post):
+        criteria = [PROTOCOL["eligibility"]["criteria"][0]]
+        paper = {
+            "title": "Deepfake detection",
+            "abstract": "We study visual research for image detection.",
+        }
+
+        def response(payload):
+            mock = Mock()
+            mock.raise_for_status = Mock()
+            mock.json = Mock(return_value=payload)
+            return mock
+
+        valid = {
+            "criteria": [{
+                "id": "visual_scope",
+                "assessment": "met",
+                "reason": "Visual scope is explicit.",
+                "evidence": [{
+                    "source": "abstract",
+                    "quote": "visual research for image detection",
+                }],
+            }],
+        }
+        post.side_effect = [
+            response({
+                "done": True,
+                "done_reason": "stop",
+                "message": {"content": "not json"},
+            }),
+            response({
+                "done": True,
+                "done_reason": "length",
+                "eval_count": 3072,
+                "message": {"content": ""},
+            }),
+            response({
+                "done": True,
+                "done_reason": "stop",
+                "message": {"content": __import__("json").dumps(valid)},
+            }),
+        ]
+
+        with tempfile.TemporaryDirectory() as folder:
+            result = screen_metadata_paper(
+                paper,
+                criteria,
+                {
+                    "model": "qwen3.5:9b",
+                    "base_url": "http://localhost:11434",
+                    "num_ctx": 8192,
+                    "fast_num_predict": 1200,
+                    "fallback_enabled": True,
+                    "fallback_think": "low",
+                    "fallback_num_predict": 3072,
+                    "repair_num_predict": 1600,
+                },
+                Path(folder),
+                "model-a",
+            )
+
+        self.assertEqual(result["metadata_screening_mode"], "repair")
+        self.assertEqual(result["metadata_screening_decision"], "include")
+        self.assertEqual(post.call_count, 3)
+        repair_payload = post.call_args_list[2].kwargs["json"]
+        self.assertIs(repair_payload["think"], False)
+        self.assertIn("format", repair_payload)
 
     @patch("screening.ollama.requests.get")
     def test_model_digest_lookup_queries_ollama(self, get):
