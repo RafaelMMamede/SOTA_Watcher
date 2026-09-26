@@ -242,19 +242,8 @@ def screen_saved_metadata(
     root.mkdir(parents=True, exist_ok=True)
 
     if stratified_sample is not None:
-        selected, strata = stratified_metadata_sample(
-            selected,
-            stratified_sample,
-            sample_seed,
-        )
-        summary.selected = len(selected)
-        summary.remaining_pending = max(
-            0,
-            summary.pending_total - summary.selected,
-        )
         summary.sampling_mode = "proportional_topic_source_stratified"
         summary.sample_seed = sample_seed
-        summary.sample_strata = strata
 
         manifest_dir = root / "samples"
         manifest_dir.mkdir(parents=True, exist_ok=True)
@@ -262,33 +251,68 @@ def screen_saved_metadata(
             manifest_dir
             / f"metadata_sample_n{stratified_sample}_seed{sample_seed}.json"
         )
-        manifest_payload = {
-            "sampling_mode": summary.sampling_mode,
-            "requested_size": stratified_sample,
-            "selected_size": len(selected),
-            "seed": sample_seed,
-            "pending_population": summary.pending_total,
-            "strata": strata,
-            "papers": [
-                {
-                    "corpus_id": candidate[0].get("corpus_id"),
-                    "title": candidate[0].get("title"),
-                    "year": candidate[0].get("year"),
-                    "search_topics": candidate[3],
-                    "sources": _paper_sources(candidate[0]),
-                }
+
+        if manifest.exists():
+            manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+            if (
+                manifest_payload.get("sampling_mode") != summary.sampling_mode
+                or manifest_payload.get("requested_size") != stratified_sample
+                or manifest_payload.get("seed") != sample_seed
+            ):
+                raise ValueError(
+                    "Existing metadata sample manifest does not match the "
+                    "requested sampling configuration."
+                )
+            by_id = {
+                candidate[0].get("corpus_id"): candidate
                 for candidate in selected
-            ],
-        }
-        manifest.write_text(
-            json.dumps(
-                manifest_payload,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ),
-            encoding="utf-8",
+            }
+            selected = [
+                by_id[item["corpus_id"]]
+                for item in manifest_payload.get("papers", [])
+                if item.get("corpus_id") in by_id
+            ]
+            strata = manifest_payload.get("strata", {})
+        else:
+            selected, strata = stratified_metadata_sample(
+                selected,
+                stratified_sample,
+                sample_seed,
+            )
+            manifest_payload = {
+                "sampling_mode": summary.sampling_mode,
+                "requested_size": stratified_sample,
+                "selected_size": len(selected),
+                "seed": sample_seed,
+                "pending_population": summary.pending_total,
+                "strata": strata,
+                "papers": [
+                    {
+                        "corpus_id": candidate[0].get("corpus_id"),
+                        "title": candidate[0].get("title"),
+                        "year": candidate[0].get("year"),
+                        "search_topics": candidate[3],
+                        "sources": _paper_sources(candidate[0]),
+                    }
+                    for candidate in selected
+                ],
+            }
+            manifest.write_text(
+                json.dumps(
+                    manifest_payload,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+
+        summary.selected = len(selected)
+        summary.remaining_pending = max(
+            0,
+            summary.pending_total - summary.selected,
         )
+        summary.sample_strata = strata
         summary.sample_manifest = str(manifest)
 
     for (
