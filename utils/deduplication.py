@@ -7,7 +7,20 @@ from urllib.parse import unquote
 import pandas as pd
 
 LIST_FIELDS = ('sources', 'queries', 'search_topics', 'provenance')
-STRUCTURED_FIELDS = (*LIST_FIELDS, 'metadata_variants', 'eligibility_evidence', 'eligibility_criteria', 'screening_search_topics', 'screening_inactive_criteria', 'fulltext_manual_candidates', 'fulltext_resolver_attempts')
+STRUCTURED_FIELDS = (
+    *LIST_FIELDS,
+    'metadata_variants',
+    'metadata_screening_evidence',
+    'metadata_screening_criteria',
+    'metadata_screening_search_topics',
+    'metadata_screening_inactive_criteria',
+    'eligibility_evidence',
+    'eligibility_criteria',
+    'screening_search_topics',
+    'screening_inactive_criteria',
+    'fulltext_manual_candidates',
+    'fulltext_resolver_attempts',
+)
 
 
 def present(value):
