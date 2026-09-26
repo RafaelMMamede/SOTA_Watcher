@@ -6,6 +6,8 @@ import hashlib
 from pathlib import Path
 import time
 
+from screening.metadata import metadata_screening_signature
+from screening.metadata_queue import metadata_config
 from screening.ollama import get_model_digest, screening_signature
 from screening.pipeline import _criteria_for_paper, screen_papers
 
@@ -29,6 +31,8 @@ class QueueSummary:
     stale: int = 0
     skipped_complete: int = 0
     skipped_retry_required: int = 0
+    skipped_metadata_pending: int = 0
+    skipped_metadata_excluded: int = 0
     pending_total: int = 0
     remaining_pending: int = 0
     elapsed_seconds: float = 0.0
@@ -80,6 +84,11 @@ def select_for_screening(store, protocol, config, *, limit=None, retry=None):
         raise ValueError(f"Unsupported retry statuses: {sorted(unknown)}")
 
     model_digest = get_model_digest(cfg)
+    require_metadata = cfg.get("require_metadata_screening", True)
+    metadata_cfg = metadata_config(config) if require_metadata else None
+    metadata_model_digest = (
+        get_model_digest(metadata_cfg) if require_metadata else None
+    )
     selected = []
     summary = QueueSummary()
 
@@ -87,6 +96,43 @@ def select_for_screening(store, protocol, config, *, limit=None, retry=None):
         active, _, _ = _criteria_for_paper(criteria, paper)
         if not active:
             continue
+
+        manual = paper.get("manual_decision") or ""
+        if manual == "exclude":
+            summary.skipped_metadata_excluded += 1
+            continue
+
+        if require_metadata and manual != "include":
+            metadata_status = (
+                paper.get("metadata_screening_status") or "not_screened"
+            )
+            metadata_decision = (
+                paper.get("metadata_screening_decision") or ""
+            )
+            expected_metadata_signature = metadata_screening_signature(
+                paper,
+                active,
+                metadata_cfg,
+                metadata_model_digest,
+            )
+            stored_metadata_signature = (
+                paper.get("metadata_screening_signature") or ""
+            )
+
+            if (
+                metadata_status != "screened"
+                or stored_metadata_signature != expected_metadata_signature
+            ):
+                summary.skipped_metadata_pending += 1
+                continue
+
+            if metadata_decision == "exclude":
+                summary.skipped_metadata_excluded += 1
+                continue
+
+            if metadata_decision not in {"include", "uncertain"}:
+                summary.skipped_metadata_pending += 1
+                continue
 
         status = paper.get("eligibility_status") or "not_screened"
         expected = _expected_signature(paper, active, cfg, model_digest)
