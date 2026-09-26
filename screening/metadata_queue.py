@@ -47,6 +47,7 @@ def metadata_config(config):
         "fallback_enabled": explicit.get("fallback_enabled", True),
         "fallback_think": explicit.get("fallback_think", "low"),
         "fallback_num_predict": explicit.get("fallback_num_predict", 3072),
+        "repair_num_predict": explicit.get("repair_num_predict", 1600),
         "timeout_seconds": explicit.get(
             "timeout_seconds",
             full.get("timeout_seconds", 180),
