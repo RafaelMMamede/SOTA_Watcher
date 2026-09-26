@@ -223,7 +223,6 @@ def metadata_screening_signature(paper, criteria, cfg, model_digest):
         "fallback_enabled": cfg.get("fallback_enabled", True),
         "fallback_think": cfg.get("fallback_think", "low"),
         "fallback_num_predict": cfg.get("fallback_num_predict", 3072),
-        "repair_num_predict": cfg.get("repair_num_predict", 1600),
     })
 
 
