@@ -1,8 +1,11 @@
 """Persistent title/abstract screening queue."""
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
+import json
 from pathlib import Path
+import random
 import time
 
 from screening.metadata import (
@@ -11,6 +14,7 @@ from screening.metadata import (
 )
 from screening.ollama import get_model_digest
 from screening.pipeline import _criteria_for_paper
+from utils.deduplication import decode, present
 
 
 @dataclass
@@ -29,6 +33,10 @@ class MetadataQueueSummary:
     elapsed_seconds: float = 0.0
     papers_per_minute: float = 0.0
     estimated_remaining_minutes: float | None = None
+    sampling_mode: str = ""
+    sample_seed: int | None = None
+    sample_manifest: str = ""
+    sample_strata: dict | None = None
 
 
 def metadata_config(config):
@@ -58,6 +66,94 @@ def metadata_config(config):
             str(Path(output_dir) / "metadata_screening"),
         ),
     }
+
+
+def _paper_sources(paper):
+    sources = decode(paper.get("sources"), [])
+    if not sources and present(paper.get("source")):
+        sources = [paper.get("source")]
+    return sorted({
+        str(source).strip()
+        for source in sources
+        if present(source)
+    })
+
+
+def _sample_stratum(candidate):
+    paper, _, _, topics, _, _ = candidate
+    topic_key = tuple(sorted(set(topics))) or ("unscoped",)
+    source_key = tuple(_paper_sources(paper)) or ("unknown",)
+    return topic_key, source_key
+
+
+def _proportional_quotas(groups, sample_size):
+    """Hamilton allocation across mutually exclusive strata."""
+    total = sum(len(items) for items in groups.values())
+    if sample_size >= total:
+        return {key: len(items) for key, items in groups.items()}
+
+    ideals = {
+        key: sample_size * len(items) / total
+        for key, items in groups.items()
+    }
+    quotas = {
+        key: min(len(groups[key]), int(value))
+        for key, value in ideals.items()
+    }
+    remaining = sample_size - sum(quotas.values())
+
+    order = sorted(
+        groups,
+        key=lambda key: (
+            -(ideals[key] - int(ideals[key])),
+            -len(groups[key]),
+            repr(key),
+        ),
+    )
+    for key in order:
+        if remaining <= 0:
+            break
+        if quotas[key] < len(groups[key]):
+            quotas[key] += 1
+            remaining -= 1
+
+    return quotas
+
+
+def stratified_metadata_sample(candidates, sample_size, seed):
+    """Return a deterministic proportional sample by topic x source signature."""
+    if type(sample_size) is not int or sample_size < 1:
+        raise ValueError("stratified sample size must be a positive integer.")
+    if type(seed) is not int:
+        raise ValueError("stratified sample seed must be an integer.")
+
+    groups = defaultdict(list)
+    for candidate in candidates:
+        groups[_sample_stratum(candidate)].append(candidate)
+
+    quotas = _proportional_quotas(groups, min(sample_size, len(candidates)))
+    rng = random.Random(seed)
+    sampled = []
+    strata = {}
+
+    for key in sorted(groups, key=repr):
+        items = list(groups[key])
+        rng.shuffle(items)
+        chosen = items[:quotas.get(key, 0)]
+        sampled.extend(chosen)
+        topic_key, source_key = key
+        label = (
+            "topics=" + "+".join(topic_key)
+            + "|sources=" + "+".join(source_key)
+        )
+        strata[label] = {
+            "population": len(items),
+            "selected": len(chosen),
+        }
+
+    # Do not expose insertion/source order as the screening order.
+    rng.shuffle(sampled)
+    return sampled, strata
 
 
 def select_for_metadata_screening(
@@ -128,6 +224,8 @@ def screen_saved_metadata(
     *,
     limit=None,
     retry_error=False,
+    stratified_sample=None,
+    sample_seed=42,
 ):
     """Process one advancing metadata batch and persist every paper immediately."""
     started = time.monotonic()
@@ -136,12 +234,62 @@ def screen_saved_metadata(
         store,
         protocol,
         config,
-        limit=limit,
+        limit=None if stratified_sample is not None else limit,
         retry_error=retry_error,
     )
 
     root = Path(cfg["artifacts_dir"])
     root.mkdir(parents=True, exist_ok=True)
+
+    if stratified_sample is not None:
+        selected, strata = stratified_metadata_sample(
+            selected,
+            stratified_sample,
+            sample_seed,
+        )
+        summary.selected = len(selected)
+        summary.remaining_pending = max(
+            0,
+            summary.pending_total - summary.selected,
+        )
+        summary.sampling_mode = "proportional_topic_source_stratified"
+        summary.sample_seed = sample_seed
+        summary.sample_strata = strata
+
+        manifest_dir = root / "samples"
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+        manifest = (
+            manifest_dir
+            / f"metadata_sample_n{stratified_sample}_seed{sample_seed}.json"
+        )
+        manifest_payload = {
+            "sampling_mode": summary.sampling_mode,
+            "requested_size": stratified_sample,
+            "selected_size": len(selected),
+            "seed": sample_seed,
+            "pending_population": summary.pending_total,
+            "strata": strata,
+            "papers": [
+                {
+                    "corpus_id": candidate[0].get("corpus_id"),
+                    "title": candidate[0].get("title"),
+                    "year": candidate[0].get("year"),
+                    "search_topics": candidate[3],
+                    "sources": _paper_sources(candidate[0]),
+                }
+                for candidate in selected
+            ],
+        }
+        manifest.write_text(
+            json.dumps(
+                manifest_payload,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        summary.sample_manifest = str(manifest)
 
     for (
         paper,
