@@ -1094,6 +1094,7 @@ class CorpusStore:
                     key: value
                     for key, value in paper.items()
                     if not key.startswith(PROCESS_PREFIXES)
+                    and not key.startswith(METADATA_SCREENING_PREFIXES)
                     and key not in DERIVED_FIELDS
                 }
             corpus_id = self.upsert_paper(paper)
@@ -1116,6 +1117,40 @@ class CorpusStore:
         papers = [decorate(dict(paper)) for paper in self.all_papers()]
         save_table(pd.DataFrame(papers), str(path))
         return len(papers)
+
+    def record_metadata_screening_batch(self, summary: dict):
+        batch_id = "msb_" + uuid.uuid4().hex
+        now = utc_now()
+        self.conn.execute(
+            """INSERT INTO metadata_screening_batches
+               (batch_id, started_at, completed_at, selected, completed,
+                included, excluded, uncertain, errors, remaining_pending,
+                elapsed_seconds, papers_per_minute, estimated_remaining_minutes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                batch_id,
+                now,
+                now,
+                int(summary.get("selected", 0)),
+                int(summary.get("completed", 0)),
+                int(summary.get("included", 0)),
+                int(summary.get("excluded", 0)),
+                int(summary.get("uncertain", 0)),
+                int(summary.get("errors", 0)),
+                int(summary.get("remaining_pending", 0)),
+                float(summary.get("elapsed_seconds", 0.0)),
+                float(summary.get("papers_per_minute", 0.0)),
+                summary.get("estimated_remaining_minutes"),
+            ),
+        )
+        self.conn.commit()
+
+    def latest_metadata_screening_batch(self) -> dict | None:
+        row = self.conn.execute(
+            """SELECT * FROM metadata_screening_batches
+               ORDER BY completed_at DESC LIMIT 1"""
+        ).fetchone()
+        return dict(row) if row else None
 
     def record_screening_batch(self, summary: dict):
         batch_id = "sb_" + uuid.uuid4().hex
@@ -1154,8 +1189,28 @@ class CorpusStore:
         screening = Counter(
             p.get("eligibility_status", "not_screened") for p in papers
         )
+        metadata_screening = Counter(
+            p.get("metadata_screening_status", "not_screened")
+            for p in papers
+        )
+        metadata_decisions = Counter(
+            p.get("metadata_screening_decision")
+            for p in papers
+            if p.get("metadata_screening_decision")
+        )
         return {
             "papers": len(papers),
+            "metadata_screening_status": dict(metadata_screening),
+            "metadata_screening_decisions": dict(metadata_decisions),
+            "metadata_screening_pending_unattempted": (
+                metadata_screening.get("not_screened", 0)
+            ),
+            "metadata_screening_retry_required": (
+                metadata_screening.get("error", 0)
+            ),
+            "last_metadata_screening_batch": (
+                self.latest_metadata_screening_batch()
+            ),
             "screening_status": dict(screening),
             "screening_pending_unattempted": (
                 screening.get("not_screened", 0)
