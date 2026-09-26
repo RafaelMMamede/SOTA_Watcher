@@ -185,8 +185,10 @@ screening.
 Metadata assessments have independent SQLite state, artifacts and signatures.
 Successive batches skip valid completed assessments. A changed title/abstract,
 model/prompt/settings, eligibility criteria, or search-family provenance makes the
-old result stale and returns the paper to the metadata queue. Retry prior metadata
-errors explicitly:
+old result stale and returns the paper to the metadata queue. The normal fast pass
+uses no thinking. If the low-thinking structured fallback exhausts its generation
+budget, metadata screening makes one final schema-constrained no-thinking repair
+instead of spending a larger reasoning budget. Retry prior metadata errors explicitly:
 
 ```bash
 python sota_watcher.py screen-metadata --limit 100 --retry error
