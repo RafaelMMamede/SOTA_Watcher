@@ -55,6 +55,7 @@ class CorpusStoreTests(unittest.TestCase):
                 cfg = {
                     'screening': {
                         'model': 'qwen3.5:9b',
+                        'require_metadata_screening': False,
                         'papers_dir': str(Path(folder) / 'papers'),
                     },
                 }
@@ -123,7 +124,10 @@ class CorpusStoreTests(unittest.TestCase):
                     })
                     return papers
 
-                cfg = {'screening': {'model': 'qwen3.5:9b'}}
+                cfg = {'screening': {
+                    'model': 'qwen3.5:9b',
+                    'require_metadata_screening': False,
+                }}
                 with patch('screening.queue.get_model_digest', return_value='model-a'), \
                      patch('screening.queue.screen_papers', side_effect=fake_screen):
                     first = screen_saved_corpus(
@@ -269,7 +273,10 @@ class CorpusStoreTests(unittest.TestCase):
                 })
 
                 from screening.ollama import screening_signature
-                cfg = {'screening': {'model': 'qwen3.5:9b'}}
+                cfg = {'screening': {
+                    'model': 'qwen3.5:9b',
+                    'require_metadata_screening': False,
+                }}
                 old_signature = screening_signature(
                     PROTOCOL['eligibility']['criteria'],
                     cfg['screening'],
@@ -320,7 +327,10 @@ class CorpusStoreTests(unittest.TestCase):
                     store.update_processing(corpus_id, paper)
                     ids.append(corpus_id)
 
-                cfg = {'screening': {'model': 'qwen3.5:9b'}}
+                cfg = {'screening': {
+                    'model': 'qwen3.5:9b',
+                    'require_metadata_screening': False,
+                }}
                 with patch(
                     'screening.queue.get_model_digest',
                     return_value='model-a',
