@@ -56,6 +56,8 @@ metadata_screening:
   fallback_enabled: true
   fallback_think: low
   fallback_num_predict: 3072
+  # Only used when the reasoning fallback exhausts its output budget.
+  repair_num_predict: 1600
   timeout_seconds: 180
   max_papers_per_run: null
   artifacts_dir: output/metadata_screening
