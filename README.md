@@ -338,8 +338,8 @@ restart point for the new subcommand workflow.
 ## Verification
 
 ```bash
-python -m py_compile sota_watcher.py screening/queue.py sources/restartable.py sources/arxiv_cache.py utils/corpus_store.py
-python -m unittest tests.test_corpus_store tests.test_restartable_discovery -v
+python -m py_compile sota_watcher.py screening/metadata.py screening/metadata_queue.py screening/queue.py sources/restartable.py sources/arxiv_cache.py utils/corpus_store.py
+python -m unittest tests.test_metadata_screening tests.test_corpus_store tests.test_restartable_discovery -v
 python -m unittest discover -s tests -q
 ```
 
