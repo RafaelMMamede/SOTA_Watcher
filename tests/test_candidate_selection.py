@@ -8,6 +8,7 @@ from screening.candidate_selection import (
     run_candidate_selection,
 )
 from screening.metadata_queue import select_for_metadata_screening
+from screening.queue import select_for_screening
 from utils.corpus_store import CorpusStore
 
 
@@ -233,6 +234,72 @@ class CandidateSelectionTests(unittest.TestCase):
                 self.assertEqual(
                     [row[0]["corpus_id"] for row in queue],
                     [selected_id],
+                )
+                self.assertEqual(
+                    queue_summary.skipped_candidate_not_selected,
+                    1,
+                )
+
+    def test_active_selection_also_gates_fulltext_queue(self):
+        protocol = {
+            "eligibility": {
+                "criteria": [{
+                    "id": "scope",
+                    "kind": "inclusion",
+                    "description": "Visual research.",
+                }],
+            },
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            cfg = {
+                "output_dir": folder,
+                "candidate_selection": {
+                    "enabled": True,
+                    "historical_start_year": 2020,
+                    "historical_through_year": 2024,
+                    "recent_from_year": 2025,
+                    "top_n_per_year_per_stream": 1,
+                    "manifest_dir": str(Path(folder) / "selection"),
+                },
+                "screening": {
+                    "model": "qwen3.5:9b",
+                    "require_metadata_screening": False,
+                },
+            }
+            with CorpusStore(Path(folder) / "corpus.sqlite3") as store:
+                keep = store.upsert_paper({
+                    "paper_id": "openalex:F1",
+                    "title": "Keep",
+                    "abstract": "Visual research.",
+                    "year": 2022,
+                    "citation_count": 100,
+                    "source": "openalex",
+                    "search_topic": "adversarial_vision",
+                })
+                store.upsert_paper({
+                    "paper_id": "openalex:F2",
+                    "title": "Drop",
+                    "abstract": "Visual research.",
+                    "year": 2022,
+                    "citation_count": 1,
+                    "source": "openalex",
+                    "search_topic": "adversarial_vision",
+                })
+                run_candidate_selection(store, cfg)
+
+                with patch(
+                    "screening.queue.get_model_digest",
+                    return_value="model-a",
+                ):
+                    queue, queue_summary = select_for_screening(
+                        store,
+                        protocol,
+                        cfg,
+                    )
+
+                self.assertEqual(
+                    [row[0]["corpus_id"] for row in queue],
+                    [keep],
                 )
                 self.assertEqual(
                     queue_summary.skipped_candidate_not_selected,
