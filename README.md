@@ -167,9 +167,67 @@ guaranteed for a changing remote repository. Missing v1 dates fail the harvest.
 A result/page cap is explicitly incomplete; matching totals are unknown until
 local harvesting ends. Capped OAI results are in harvest order, not globally ranked.
 
+## Candidate selection
+
+For the large production corpus, candidate selection is a deterministic gate
+before title/abstract screening. It does **not** modify or delete discovery
+records.
+
+The default citation-aware policy is:
+
+- protect every plausible core paper regardless of citation count;
+- automatically protect papers retrieved by both search families;
+- also protect title/abstract records containing both deepfake/forgery and
+  adversarial/robustness concepts;
+- for contextual papers from 2020--2024, rank separately within
+  publication year × retrieval stream and retain the top 100 cited papers;
+- include all papers tied with the 100th paper;
+- do not apply citation ranking to 2025--2026 records;
+- keep historical records without citation counts as `unresolved` rather than
+  treating missing citations as zero.
+
+Preview the reduction without changing the active corpus state:
+
+```bash
+python sota_watcher.py select-candidates --dry-run
+```
+
+Activate the selection:
+
+```bash
+python sota_watcher.py select-candidates
+```
+
+Use `--top-n N` to pilot another historical quota. The complete decision for
+every corpus record, including stream, year, citation count/rank, core-protection
+reason and selection reason, is written to a JSON manifest under
+`candidate_selection/` and persisted in SQLite. `status` reports the current
+selection counts.
+
+The current corpus-level `citation_count` is the maximum citation count observed
+across merged providers. This is explicitly recorded as the citation metric in
+the selection audit; provider-specific citation normalization can be added later
+without changing discovery.
+
+### Resetting an earlier metadata-screening pilot
+
+Machine title/abstract decisions can be reset without changing discovery,
+candidate identifiers, human review, or full-text state:
+
+```bash
+python sota_watcher.py reset-metadata-screening \
+  --yes \
+  --reason "Switch to citation-aware candidate selection"
+```
+
+The command first moves the existing metadata artifact directory into a timestamped
+archive and then archives the active SQLite metadata-screening rows and batch
+history before clearing them. This prevents old cached model results from silently
+reappearing in the new screening run.
+
 ## Title and abstract screening
 
-Run metadata eligibility after discovery and before PDF retrieval:
+Run metadata eligibility after discovery and candidate selection, before PDF retrieval:
 
 ```bash
 python sota_watcher.py screen-metadata --limit 100
@@ -208,6 +266,11 @@ instead of spending a larger reasoning budget. Retry prior metadata errors expli
 ```bash
 python sota_watcher.py screen-metadata --limit 100 --retry error
 ```
+
+When `metadata_screening.require_candidate_selection: true`, only records with
+active `candidate_selection_status: selected` enter the metadata queue.
+Historical citation-missing records remain visible as `unresolved` but are not
+silently screened or discarded.
 
 The default full-text queue requires a current metadata assessment
 (`screening.require_metadata_screening: true`). Clear metadata exclusions do not
