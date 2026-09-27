@@ -1293,6 +1293,7 @@ class CorpusStore:
                     for key, value in paper.items()
                     if not key.startswith(PROCESS_PREFIXES)
                     and not key.startswith(METADATA_SCREENING_PREFIXES)
+                    and not key.startswith(CANDIDATE_SELECTION_PREFIXES)
                     and key not in DERIVED_FIELDS
                 }
             corpus_id = self.upsert_paper(paper)
