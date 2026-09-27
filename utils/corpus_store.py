@@ -119,6 +119,13 @@ class CorpusStore:
                 notes TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS human_metadata_screening (
+                corpus_id TEXT PRIMARY KEY REFERENCES papers(corpus_id) ON DELETE CASCADE,
+                decision TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS processing (
                 corpus_id TEXT PRIMARY KEY REFERENCES papers(corpus_id) ON DELETE CASCADE,
                 fulltext_status TEXT NOT NULL DEFAULT 'not_requested',
@@ -564,6 +571,40 @@ class CorpusStore:
         if commit:
             self.conn.commit()
 
+    def set_human_metadata_screening(
+        self,
+        corpus_id: str,
+        decision: str = "",
+        reason: str = "",
+        notes: str = "",
+        *,
+        commit: bool = True,
+    ):
+        if decision not in {"", "include", "exclude", "uncertain"}:
+            raise ValueError(
+                "Human metadata screening decision must be "
+                "include, exclude, uncertain, or empty."
+            )
+        self.conn.execute(
+            """INSERT INTO human_metadata_screening
+               (corpus_id, decision, reason, notes, updated_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(corpus_id) DO UPDATE SET
+                 decision=excluded.decision,
+                 reason=excluded.reason,
+                 notes=excluded.notes,
+                 updated_at=excluded.updated_at""",
+            (
+                corpus_id,
+                decision or "",
+                reason or "",
+                notes or "",
+                utc_now(),
+            ),
+        )
+        if commit:
+            self.conn.commit()
+
     def update_processing(
         self,
         corpus_id: str,
@@ -828,12 +869,17 @@ class CorpusStore:
         row = self.conn.execute(
             """SELECT p.metadata_json,
                       h.manual_decision, h.manual_reason, h.notes,
+                      hm.decision AS human_metadata_screening_decision,
+                      hm.reason AS human_metadata_screening_reason,
+                      hm.notes AS human_metadata_screening_notes,
+                      hm.updated_at AS human_metadata_screening_updated_at,
                       x.result_json, x.screening_signature,
                       m.result_json AS metadata_screening_result_json,
                       m.signature AS metadata_screening_signature,
                       c.payload_json AS candidate_selection_payload_json
                FROM papers p
                LEFT JOIN human_review h USING(corpus_id)
+               LEFT JOIN human_metadata_screening hm USING(corpus_id)
                LEFT JOIN processing x USING(corpus_id)
                LEFT JOIN metadata_screening m USING(corpus_id)
                LEFT JOIN candidate_selection c USING(corpus_id)
@@ -860,6 +906,18 @@ class CorpusStore:
             )
         for field in HUMAN_FIELDS:
             paper[field] = row[field] or ""
+        paper["human_metadata_screening_decision"] = (
+            row["human_metadata_screening_decision"] or ""
+        )
+        paper["human_metadata_screening_reason"] = (
+            row["human_metadata_screening_reason"] or ""
+        )
+        paper["human_metadata_screening_notes"] = (
+            row["human_metadata_screening_notes"] or ""
+        )
+        paper["human_metadata_screening_updated_at"] = (
+            row["human_metadata_screening_updated_at"] or ""
+        )
         paper["screening_signature"] = row["screening_signature"] or ""
         return paper
 
