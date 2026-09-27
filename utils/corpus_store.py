@@ -19,6 +19,7 @@ from utils.io import load_existing_table, save_table
 HUMAN_FIELDS = ("manual_decision", "manual_reason", "notes")
 PROCESS_PREFIXES = ("eligibility_", "screening_", "fulltext_", "pdf_")
 METADATA_SCREENING_PREFIXES = ("metadata_screening_",)
+CANDIDATE_SELECTION_PREFIXES = ("candidate_selection_",)
 DERIVED_FIELDS = {"effective_decision", "decision_origin"}
 
 
@@ -38,6 +39,7 @@ def _metadata_only(paper: dict) -> dict:
         and key not in DERIVED_FIELDS
         and not key.startswith(PROCESS_PREFIXES)
         and not key.startswith(METADATA_SCREENING_PREFIXES)
+        and not key.startswith(CANDIDATE_SELECTION_PREFIXES)
         and key != "corpus_id"
     }
 
@@ -168,6 +170,47 @@ class CorpusStore:
                 papers_per_minute REAL NOT NULL,
                 estimated_remaining_minutes REAL
             );
+            CREATE TABLE IF NOT EXISTS metadata_screening_resets (
+                reset_id TEXT PRIMARY KEY,
+                reset_at TEXT NOT NULL,
+                archived_rows INTEGER NOT NULL,
+                archived_batches INTEGER NOT NULL,
+                artifact_archive TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL DEFAULT '',
+                batches_json TEXT NOT NULL DEFAULT '[]'
+            );
+            CREATE TABLE IF NOT EXISTS metadata_screening_archive (
+                reset_id TEXT NOT NULL
+                    REFERENCES metadata_screening_resets(reset_id) ON DELETE CASCADE,
+                corpus_id TEXT NOT NULL,
+                row_json TEXT NOT NULL,
+                PRIMARY KEY (reset_id, corpus_id)
+            );
+            CREATE TABLE IF NOT EXISTS candidate_selection_runs (
+                run_id TEXT PRIMARY KEY,
+                policy_hash TEXT NOT NULL,
+                policy_json TEXT NOT NULL,
+                summary_json TEXT NOT NULL,
+                manifest_path TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS candidate_selection (
+                corpus_id TEXT PRIMARY KEY
+                    REFERENCES papers(corpus_id) ON DELETE CASCADE,
+                run_id TEXT NOT NULL
+                    REFERENCES candidate_selection_runs(run_id) ON DELETE CASCADE,
+                status TEXT NOT NULL,
+                stream TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                year INTEGER,
+                citation_count REAL,
+                citation_rank INTEGER,
+                core_protected INTEGER NOT NULL DEFAULT 0,
+                payload_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_candidate_selection_status
+                ON candidate_selection(status, stream, year);
             CREATE TABLE IF NOT EXISTS discovery_runs (
                 run_id TEXT PRIMARY KEY,
                 config_hash TEXT NOT NULL,
