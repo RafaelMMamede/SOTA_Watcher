@@ -652,6 +652,143 @@ class CorpusStore:
         if commit:
             self.conn.commit()
 
+    def reset_metadata_screening(
+        self,
+        *,
+        artifact_archive: str = "",
+        reason: str = "",
+    ) -> dict:
+        """Archive and clear active machine metadata-screening state."""
+        reset_id = "msr_" + uuid.uuid4().hex
+        reset_at = utc_now()
+
+        with self.transaction():
+            rows = self.conn.execute(
+                "SELECT * FROM metadata_screening ORDER BY corpus_id"
+            ).fetchall()
+            batches = [
+                dict(row)
+                for row in self.conn.execute(
+                    """SELECT * FROM metadata_screening_batches
+                       ORDER BY completed_at, batch_id"""
+                )
+            ]
+
+            self.conn.execute(
+                """INSERT INTO metadata_screening_resets
+                   (reset_id, reset_at, archived_rows, archived_batches,
+                    artifact_archive, reason, batches_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    reset_id,
+                    reset_at,
+                    len(rows),
+                    len(batches),
+                    artifact_archive or "",
+                    reason or "",
+                    _json(batches),
+                ),
+            )
+
+            for row in rows:
+                self.conn.execute(
+                    """INSERT INTO metadata_screening_archive
+                       (reset_id, corpus_id, row_json)
+                       VALUES (?, ?, ?)""",
+                    (reset_id, row["corpus_id"], _json(dict(row))),
+                )
+
+            self.conn.execute("DELETE FROM metadata_screening")
+            self.conn.execute("DELETE FROM metadata_screening_batches")
+
+        return {
+            "reset_id": reset_id,
+            "reset_at": reset_at,
+            "archived_rows": len(rows),
+            "archived_batches": len(batches),
+            "artifact_archive": artifact_archive or "",
+            "reason": reason or "",
+        }
+
+    def latest_metadata_screening_reset(self) -> dict | None:
+        row = self.conn.execute(
+            """SELECT * FROM metadata_screening_resets
+               ORDER BY reset_at DESC LIMIT 1"""
+        ).fetchone()
+        return dict(row) if row else None
+
+    def replace_candidate_selection(
+        self,
+        policy: dict,
+        records: list[dict],
+        summary: dict,
+        *,
+        manifest_path: str = "",
+    ) -> str:
+        """Atomically replace the active deterministic candidate-selection set."""
+        run_id = "csr_" + uuid.uuid4().hex
+        payload = _json(policy)
+        policy_hash = hashlib.sha256(payload.encode()).hexdigest()
+        now = utc_now()
+
+        with self.transaction():
+            self.conn.execute(
+                """INSERT INTO candidate_selection_runs
+                   (run_id, policy_hash, policy_json, summary_json,
+                    manifest_path, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    policy_hash,
+                    payload,
+                    _json(summary),
+                    manifest_path or "",
+                    now,
+                ),
+            )
+            self.conn.execute("DELETE FROM candidate_selection")
+
+            for row in records:
+                corpus_id = row.get("corpus_id")
+                if not corpus_id:
+                    raise ValueError(
+                        "candidate selection record is missing corpus_id."
+                    )
+                self.conn.execute(
+                    """INSERT INTO candidate_selection
+                       (corpus_id, run_id, status, stream, reason, year,
+                        citation_count, citation_rank, core_protected,
+                        payload_json, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        corpus_id,
+                        run_id,
+                        row.get("candidate_selection_status", ""),
+                        row.get("candidate_selection_stream", ""),
+                        row.get("candidate_selection_reason", ""),
+                        row.get("candidate_selection_year"),
+                        row.get("candidate_selection_citation_count"),
+                        row.get("candidate_selection_citation_rank"),
+                        int(bool(row.get("candidate_selection_core_protected"))),
+                        _json(row),
+                        now,
+                    ),
+                )
+
+        return run_id
+
+    def latest_candidate_selection_run(self) -> dict | None:
+        row = self.conn.execute(
+            """SELECT * FROM candidate_selection_runs
+               ORDER BY created_at DESC LIMIT 1"""
+        ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["policy"] = json.loads(result.pop("policy_json") or "{}")
+        result["summary"] = json.loads(result.pop("summary_json") or "{}")
+        return result
+
     def save_metadata_screened_paper(
         self,
         paper: dict,
