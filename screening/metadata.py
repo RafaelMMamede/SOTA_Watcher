@@ -150,12 +150,22 @@ def validate_metadata_result(result, criteria, paper):
             raise ValueError("Invalid metadata criterion assessment.")
 
         if assessment == "uncertain":
-            if evidence:
-                raise ValueError("Uncertain metadata assessments require empty evidence.")
+            # Conservative normalization: uncertain assessments never retain
+            # evidence, even if the model supplied some accidentally.
+            row["evidence"] = []
             continue
 
         if len(evidence) != 1:
-            raise ValueError("Definite metadata assessments require one evidence quote.")
+            # A definite claim without exactly one grounded quote is not
+            # trustworthy enough for metadata exclusion/inclusion. Downgrade
+            # the criterion rather than failing the whole paper.
+            row["assessment"] = "uncertain"
+            row["reason"] = (
+                "Model returned a definite metadata assessment without one "
+                "valid evidence quote; downgraded to uncertain."
+            )
+            row["evidence"] = []
+            continue
 
         item = evidence[0]
         if (
@@ -163,7 +173,13 @@ def validate_metadata_result(result, criteria, paper):
             or item.get("source") not in {"title", "abstract"}
             or not isinstance(item.get("quote"), str)
         ):
-            raise ValueError("Metadata evidence does not match title/abstract text.")
+            row["assessment"] = "uncertain"
+            row["reason"] = (
+                "Model evidence was not grounded to the supplied title or "
+                "abstract; downgraded to uncertain."
+            )
+            row["evidence"] = []
+            continue
 
         source_name = item["source"]
         quote = _canonical_quote(item["quote"], texts[source_name])
@@ -174,7 +190,13 @@ def validate_metadata_result(result, criteria, paper):
                 if candidate is not None:
                     matches.append((candidate_source, candidate))
             if len(matches) != 1:
-                raise ValueError("Metadata evidence does not match title/abstract text.")
+                row["assessment"] = "uncertain"
+                row["reason"] = (
+                    "Model evidence could not be uniquely grounded to the "
+                    "supplied title or abstract; downgraded to uncertain."
+                )
+                row["evidence"] = []
+                continue
             source_name, quote = matches[0]
             item["source"] = source_name
 
