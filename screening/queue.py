@@ -126,7 +126,18 @@ def select_for_screening(store, protocol, config, *, limit=None, retry=None):
                 summary.skipped_candidate_not_selected += 1
                 continue
 
-        if require_metadata and manual != "include":
+        human_metadata = (
+            paper.get("human_metadata_screening_decision") or ""
+        )
+        if manual != "include" and human_metadata == "exclude":
+            summary.skipped_metadata_excluded += 1
+            continue
+
+        if (
+            require_metadata
+            and manual != "include"
+            and human_metadata != "include"
+        ):
             metadata_status = (
                 paper.get("metadata_screening_status") or "not_screened"
             )
