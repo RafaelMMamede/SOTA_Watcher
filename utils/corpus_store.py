@@ -19,6 +19,7 @@ from utils.io import load_existing_table, save_table
 HUMAN_FIELDS = ("manual_decision", "manual_reason", "notes")
 PROCESS_PREFIXES = ("eligibility_", "screening_", "fulltext_", "pdf_")
 METADATA_SCREENING_PREFIXES = ("metadata_screening_",)
+HUMAN_METADATA_SCREENING_PREFIXES = ("human_metadata_screening_",)
 CANDIDATE_SELECTION_PREFIXES = ("candidate_selection_",)
 DERIVED_FIELDS = {"effective_decision", "decision_origin"}
 
@@ -39,6 +40,7 @@ def _metadata_only(paper: dict) -> dict:
         and key not in DERIVED_FIELDS
         and not key.startswith(PROCESS_PREFIXES)
         and not key.startswith(METADATA_SCREENING_PREFIXES)
+        and not key.startswith(HUMAN_METADATA_SCREENING_PREFIXES)
         and not key.startswith(CANDIDATE_SELECTION_PREFIXES)
         and key != "corpus_id"
     }
@@ -1399,6 +1401,7 @@ class CorpusStore:
                     for key, value in paper.items()
                     if not key.startswith(PROCESS_PREFIXES)
                     and not key.startswith(METADATA_SCREENING_PREFIXES)
+                    and not key.startswith(HUMAN_METADATA_SCREENING_PREFIXES)
                     and not key.startswith(CANDIDATE_SELECTION_PREFIXES)
                     and key not in DERIVED_FIELDS
                 }
@@ -1504,6 +1507,11 @@ class CorpusStore:
             if p.get("metadata_screening_status") == "screened"
             and p.get("metadata_screening_decision")
         )
+        human_metadata_decisions = Counter(
+            p.get("human_metadata_screening_decision")
+            for p in papers
+            if p.get("human_metadata_screening_decision")
+        )
         candidate_run = self.latest_candidate_selection_run()
         candidate_selection_status = Counter(
             p.get("candidate_selection_status", "not_selected_yet")
@@ -1561,6 +1569,9 @@ class CorpusStore:
             "last_metadata_screening_reset": self.latest_metadata_screening_reset(),
             "metadata_screening_status": dict(metadata_screening),
             "metadata_screening_decisions": dict(metadata_decisions),
+            "human_metadata_screening_decisions": dict(
+                human_metadata_decisions
+            ),
             "metadata_screening_selected_pool_status": dict(
                 metadata_pool_status
             ),
