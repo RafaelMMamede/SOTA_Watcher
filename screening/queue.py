@@ -33,6 +33,8 @@ class QueueSummary:
     skipped_retry_required: int = 0
     skipped_metadata_pending: int = 0
     skipped_metadata_excluded: int = 0
+    skipped_candidate_not_selected: int = 0
+    skipped_candidate_unresolved: int = 0
     pending_total: int = 0
     remaining_pending: int = 0
     elapsed_seconds: float = 0.0
@@ -86,6 +88,19 @@ def select_for_screening(store, protocol, config, *, limit=None, retry=None):
     model_digest = get_model_digest(cfg)
     require_metadata = cfg.get("require_metadata_screening", True)
     metadata_cfg = metadata_config(config) if require_metadata else None
+    active_candidate_selection = store.latest_candidate_selection_run()
+    explicit_candidate_requirement = config.get(
+        "metadata_screening",
+        {},
+    ).get("require_candidate_selection")
+    require_candidate_selection = (
+        bool(explicit_candidate_requirement)
+        if explicit_candidate_requirement is not None
+        else (
+            active_candidate_selection is not None
+            or config.get("candidate_selection", {}).get("enabled", False)
+        )
+    )
     metadata_model_digest = (
         get_model_digest(metadata_cfg) if require_metadata else None
     )
@@ -101,6 +116,15 @@ def select_for_screening(store, protocol, config, *, limit=None, retry=None):
         if manual == "exclude":
             summary.skipped_metadata_excluded += 1
             continue
+
+        if require_candidate_selection and manual != "include":
+            candidate_status = paper.get("candidate_selection_status") or ""
+            if candidate_status == "unresolved":
+                summary.skipped_candidate_unresolved += 1
+                continue
+            if candidate_status != "selected":
+                summary.skipped_candidate_not_selected += 1
+                continue
 
         if require_metadata and manual != "include":
             metadata_status = (
