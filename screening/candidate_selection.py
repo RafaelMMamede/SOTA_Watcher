@@ -250,6 +250,8 @@ def build_candidate_selection(
 
         row = {
             "corpus_id": corpus_id,
+            "candidate_selection_title": str(paper.get("title") or ""),
+            "candidate_selection_search_topics": _topics(paper),
             "candidate_selection_status": "",
             "candidate_selection_stream": stream,
             "candidate_selection_reason": "",
