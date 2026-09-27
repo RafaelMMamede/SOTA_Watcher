@@ -374,6 +374,53 @@ class CorpusStore:
                         ),
                     )
 
+            target_human_metadata = self.conn.execute(
+                "SELECT * FROM human_metadata_screening WHERE corpus_id=?",
+                (target,),
+            ).fetchone()
+            source_human_metadata = self.conn.execute(
+                "SELECT * FROM human_metadata_screening WHERE corpus_id=?",
+                (source,),
+            ).fetchone()
+            if source_human_metadata:
+                if target_human_metadata:
+                    t = dict(target_human_metadata)
+                    s = dict(source_human_metadata)
+                    if (
+                        t["decision"]
+                        and s["decision"]
+                        and t["decision"] != s["decision"]
+                    ):
+                        raise ValueError(
+                            "Cannot merge corpus records with conflicting "
+                            "human metadata-screening decisions."
+                        )
+                    self.conn.execute(
+                        """UPDATE human_metadata_screening
+                           SET decision=?, reason=?, notes=?, updated_at=?
+                           WHERE corpus_id=?""",
+                        (
+                            t["decision"] or s["decision"],
+                            t["reason"] or s["reason"],
+                            t["notes"] or s["notes"],
+                            utc_now(),
+                            target,
+                        ),
+                    )
+                else:
+                    self.conn.execute(
+                        """INSERT INTO human_metadata_screening
+                           (corpus_id, decision, reason, notes, updated_at)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (
+                            target,
+                            source_human_metadata["decision"],
+                            source_human_metadata["reason"],
+                            source_human_metadata["notes"],
+                            source_human_metadata["updated_at"],
+                        ),
+                    )
+
             self.conn.execute(
                 "UPDATE OR IGNORE aliases SET corpus_id=? WHERE corpus_id=?",
                 (target, source),
