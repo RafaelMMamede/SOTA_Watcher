@@ -178,11 +178,19 @@ def select_for_metadata_screening(
         raise ValueError("metadata screening limit must be positive or null.")
 
     cfg = metadata_config(config)
-    require_candidate_selection = cfg.get(
-        "require_candidate_selection",
-        False,
+    active_selection = store.latest_candidate_selection_run()
+    explicit_require = config.get("metadata_screening", {}).get(
+        "require_candidate_selection"
     )
-    if require_candidate_selection and not store.latest_candidate_selection_run():
+    require_candidate_selection = (
+        bool(explicit_require)
+        if explicit_require is not None
+        else (
+            candidate_selection_config(config).get("enabled", False)
+            or active_selection is not None
+        )
+    )
+    if require_candidate_selection and not active_selection:
         raise ValueError(
             "Metadata screening requires candidate selection. "
             "Run 'python sota_watcher.py select-candidates' first."
