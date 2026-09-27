@@ -17,6 +17,7 @@ from utils.corpus_store import CorpusStore
 from screening import screen_papers
 from screening.queue import screen_saved_corpus
 from screening.candidate_selection import run_candidate_selection
+from screening.human_review import run_human_screening
 from screening.metadata_queue import metadata_config, screen_saved_metadata
 from utils.reporting import decorate, review_counts, summary_markdown
 from fulltext._common import read_json
@@ -162,6 +163,18 @@ def command_reset_metadata_screening(args, config):
     print(json.dumps(result, indent=2, sort_keys=True))
 
 
+def command_human_screen(args, config):
+    with CorpusStore(_store_path(config)) as store:
+        summary = run_human_screening(
+            store,
+            limit=args.limit,
+            selected_only=not args.all,
+            revisit=args.revisit,
+        )
+    print("\nSession summary:")
+    print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
+
+
 def command_screen_metadata(args, config, terms):
     retry_error = args.retry == "error"
     limit = args.limit
@@ -267,6 +280,27 @@ def build_parser():
         help='Optional audit note explaining why the screening state was reset.',
     )
 
+    human = sub.add_parser(
+        'human-screen',
+        help='Interactively review titles/abstracts one paper at a time.',
+    )
+    human.add_argument(
+        '--limit',
+        type=int,
+        default=None,
+        help='Maximum number of human decisions to record this session.',
+    )
+    human.add_argument(
+        '--all',
+        action='store_true',
+        help='Review the whole corpus instead of only active selected candidates.',
+    )
+    human.add_argument(
+        '--revisit',
+        action='store_true',
+        help='Include papers that already have a human decision.',
+    )
+
     metadata = sub.add_parser(
         'screen-metadata',
         help='Screen titles/abstracts before full-text retrieval.',
@@ -344,6 +378,8 @@ def main(argv=None):
         command_select_candidates(args, config)
     elif args.command == 'reset-metadata-screening':
         command_reset_metadata_screening(args, config)
+    elif args.command == 'human-screen':
+        command_human_screen(args, config)
     elif args.command == 'screen-metadata':
         command_screen_metadata(args, config, _load_protocol(config))
     elif args.command == 'screen':
