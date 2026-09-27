@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 
@@ -184,9 +185,10 @@ def _citation(paper: dict) -> float | None:
     if value in (None, ""):
         return None
     try:
-        return float(value)
+        citation = float(value)
     except (TypeError, ValueError):
         return None
+    return citation if math.isfinite(citation) else None
 
 
 def _rank_with_ties(items: list[dict]) -> dict[str, int]:
