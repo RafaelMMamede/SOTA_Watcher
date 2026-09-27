@@ -712,7 +712,9 @@ class CorpusStore:
 
     def latest_metadata_screening_reset(self) -> dict | None:
         row = self.conn.execute(
-            """SELECT * FROM metadata_screening_resets
+            """SELECT reset_id, reset_at, archived_rows, archived_batches,
+                      artifact_archive, reason
+               FROM metadata_screening_resets
                ORDER BY reset_at DESC LIMIT 1"""
         ).fetchone()
         return dict(row) if row else None
