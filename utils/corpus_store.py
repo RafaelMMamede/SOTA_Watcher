@@ -827,11 +827,13 @@ class CorpusStore:
                       h.manual_decision, h.manual_reason, h.notes,
                       x.result_json, x.screening_signature,
                       m.result_json AS metadata_screening_result_json,
-                      m.signature AS metadata_screening_signature
+                      m.signature AS metadata_screening_signature,
+                      c.payload_json AS candidate_selection_payload_json
                FROM papers p
                LEFT JOIN human_review h USING(corpus_id)
                LEFT JOIN processing x USING(corpus_id)
                LEFT JOIN metadata_screening m USING(corpus_id)
+               LEFT JOIN candidate_selection c USING(corpus_id)
                WHERE p.corpus_id=?""",
             (corpus_id,),
         ).fetchone()
@@ -845,6 +847,10 @@ class CorpusStore:
             row["metadata_screening_result_json"] or "{}"
         )
         paper.update(metadata_result)
+        selection_payload = json.loads(
+            row["candidate_selection_payload_json"] or "{}"
+        )
+        paper.update(selection_payload)
         if row["metadata_screening_signature"]:
             paper["metadata_screening_signature"] = (
                 row["metadata_screening_signature"]
@@ -1389,6 +1395,21 @@ class CorpusStore:
             if p.get("metadata_screening_status") == "screened"
             and p.get("metadata_screening_decision")
         )
+        candidate_selection_status = Counter(
+            p.get("candidate_selection_status", "not_selected_yet")
+            for p in papers
+        )
+        candidate_selection_reasons = Counter(
+            p.get("candidate_selection_reason")
+            for p in papers
+            if p.get("candidate_selection_reason")
+        )
+        candidate_selection_streams = Counter(
+            p.get("candidate_selection_stream")
+            for p in papers
+            if p.get("candidate_selection_status") == "selected"
+            and p.get("candidate_selection_stream")
+        )
         papers_by_source = Counter()
         for paper in papers:
             sources = decode(paper.get("sources"), [])
@@ -1403,6 +1424,13 @@ class CorpusStore:
         return {
             "papers": len(papers),
             "unique_papers_by_source": dict(sorted(papers_by_source.items())),
+            "candidate_selection_status": dict(candidate_selection_status),
+            "candidate_selection_reasons": dict(candidate_selection_reasons),
+            "candidate_selection_selected_by_stream": dict(
+                candidate_selection_streams
+            ),
+            "last_candidate_selection_run": self.latest_candidate_selection_run(),
+            "last_metadata_screening_reset": self.latest_metadata_screening_reset(),
             "metadata_screening_status": dict(metadata_screening),
             "metadata_screening_decisions": dict(metadata_decisions),
             "metadata_screening_pending_unattempted": (
