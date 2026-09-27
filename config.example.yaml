@@ -45,10 +45,32 @@ fulltext_resolution:
   timeout_seconds: 20
   max_retries: 2
 
+candidate_selection:
+  # Deterministic gate before title/abstract screening.
+  # Potential core papers are always protected. For established contextual
+  # literature, rank separately within publication year x search stream.
+  enabled: true
+  historical_start_year: 2020
+  historical_through_year: 2024
+  recent_from_year: 2025
+  top_n_per_year_per_stream: 100
+  # Include all papers tied with the Nth paper rather than breaking citation ties.
+  include_ties: true
+  # A paper retrieved by both search families is treated as a potential core paper.
+  protect_both_streams: true
+  # Also protect title/abstract records that contain both deepfake/forgery and
+  # adversarial/robustness concepts.
+  protect_core_keywords: true
+  # Current corpus citation_count is the maximum observed provider count.
+  citation_metric: merged_max_provider_citation_count
+  manifest_dir: output/candidate_selection
+
 metadata_screening:
   # Standalone title/abstract screening is run with:
   #   python sota_watcher.py screen-metadata --limit N
   # It is intentionally high recall: uncertain records advance to full text.
+  # When true, only records selected by candidate_selection are queued.
+  require_candidate_selection: true
   model: qwen3.5:9b
   base_url: http://localhost:11434
   num_ctx: 8192
