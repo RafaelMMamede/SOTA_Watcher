@@ -1206,7 +1206,8 @@ class CorpusStore:
         metadata_decisions = Counter(
             p.get("metadata_screening_decision")
             for p in papers
-            if p.get("metadata_screening_decision")
+            if p.get("metadata_screening_status") == "screened"
+            and p.get("metadata_screening_decision")
         )
         papers_by_source = Counter()
         for paper in papers:
@@ -1236,9 +1237,8 @@ class CorpusStore:
                     + metadata_decisions.get("uncertain", 0)
                 ),
                 "excluded_after_metadata": metadata_decisions.get("exclude", 0),
-                "awaiting_metadata": (
-                    len(papers) - sum(metadata_decisions.values())
-                ),
+                "awaiting_metadata": metadata_screening.get("not_screened", 0),
+                "retry_required": metadata_screening.get("error", 0),
             },
             "last_metadata_screening_batch": (
                 self.latest_metadata_screening_batch()
