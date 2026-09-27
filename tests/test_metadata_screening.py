@@ -110,8 +110,43 @@ class MetadataScreeningTests(unittest.TestCase):
                 }],
             }],
         }
-        with self.assertRaisesRegex(ValueError, "title/abstract"):
-            validate_metadata_result(bad, criteria, paper)
+        downgraded = validate_metadata_result(bad, criteria, paper)
+        self.assertEqual(downgraded[0]["assessment"], "uncertain")
+        self.assertEqual(downgraded[0]["evidence"], [])
+
+    def test_missing_or_extra_metadata_evidence_is_conservative(self):
+        criteria = [PROTOCOL["eligibility"]["criteria"][0]]
+        paper = {
+            "title": "Visual research",
+            "abstract": "We study image detection.",
+        }
+
+        missing = {
+            "criteria": [{
+                "id": "visual_scope",
+                "assessment": "met",
+                "reason": "Definite but unsupported.",
+                "evidence": [],
+            }],
+        }
+        rows = validate_metadata_result(missing, criteria, paper)
+        self.assertEqual(rows[0]["assessment"], "uncertain")
+        self.assertEqual(rows[0]["evidence"], [])
+
+        extra = {
+            "criteria": [{
+                "id": "visual_scope",
+                "assessment": "uncertain",
+                "reason": "Unsure.",
+                "evidence": [{
+                    "source": "title",
+                    "quote": "Visual research",
+                }],
+            }],
+        }
+        rows = validate_metadata_result(extra, criteria, paper)
+        self.assertEqual(rows[0]["assessment"], "uncertain")
+        self.assertEqual(rows[0]["evidence"], [])
 
     def test_metadata_uncertainty_is_not_exclusion(self):
         criteria = PROTOCOL["eligibility"]["criteria"]
