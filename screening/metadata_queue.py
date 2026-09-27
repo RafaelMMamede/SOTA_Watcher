@@ -12,6 +12,7 @@ from screening.metadata import (
     metadata_screening_signature,
     screen_metadata_paper,
 )
+from screening.candidate_selection import candidate_selection_config
 from screening.ollama import get_model_digest
 from screening.pipeline import _criteria_for_paper
 from utils.deduplication import decode, present
@@ -28,6 +29,8 @@ class MetadataQueueSummary:
     stale: int = 0
     skipped_complete: int = 0
     skipped_retry_required: int = 0
+    skipped_candidate_not_selected: int = 0
+    skipped_candidate_unresolved: int = 0
     pending_total: int = 0
     remaining_pending: int = 0
     elapsed_seconds: float = 0.0
@@ -61,6 +64,10 @@ def metadata_config(config):
             full.get("timeout_seconds", 180),
         ),
         "force": explicit.get("force", False),
+        "require_candidate_selection": explicit.get(
+            "require_candidate_selection",
+            candidate_selection_config(config).get("enabled", False),
+        ),
         "artifacts_dir": explicit.get(
             "artifacts_dir",
             str(Path(output_dir) / "metadata_screening"),
@@ -171,11 +178,32 @@ def select_for_metadata_screening(
         raise ValueError("metadata screening limit must be positive or null.")
 
     cfg = metadata_config(config)
+    require_candidate_selection = cfg.get(
+        "require_candidate_selection",
+        False,
+    )
+    if require_candidate_selection and not store.latest_candidate_selection_run():
+        raise ValueError(
+            "Metadata screening requires candidate selection. "
+            "Run 'python sota_watcher.py select-candidates' first."
+        )
+
     model_digest = get_model_digest(cfg)
     selected = []
     summary = MetadataQueueSummary()
 
     for paper in store.all_papers():
+        if require_candidate_selection:
+            candidate_status = (
+                paper.get("candidate_selection_status") or ""
+            )
+            if candidate_status == "unresolved":
+                summary.skipped_candidate_unresolved += 1
+                continue
+            if candidate_status != "selected":
+                summary.skipped_candidate_not_selected += 1
+                continue
+
         active, inactive, topics = _criteria_for_paper(criteria, paper)
         if not active:
             continue
