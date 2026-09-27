@@ -23,21 +23,36 @@ DEFAULT_DEEPFAKE_TERMS = (
     "synthetic face",
     "fake face",
     "forged face",
+    "image forgery",
+    "forged image",
+    "ai-generated image",
+    "ai generated image",
+    "synthetic image",
     "forgery detection",
 )
 
+# Deliberately avoid bare "adversarial": deepfake papers often mention
+# generative adversarial networks without studying adversarial examples.
 DEFAULT_ADVERSARIAL_TERMS = (
-    "adversarial",
-    "robustness",
-    "robust",
-    "evasion",
-    "perturbation",
-    "black-box",
-    "black box",
-    "white-box",
-    "white box",
-    "transferability",
-    "attack transfer",
+    "adversarial attack",
+    "adversarial attacks",
+    "adversarial example",
+    "adversarial examples",
+    "adversarial perturbation",
+    "adversarial perturbations",
+    "adversarial robustness",
+    "adversarial defense",
+    "adversarial defence",
+    "adversarial training",
+    "evasion attack",
+    "evasion attacks",
+    "black-box attack",
+    "black box attack",
+    "white-box attack",
+    "white box attack",
+    "adversarial transferability",
+    "transfer attack",
+    "transfer attacks",
 )
 
 STREAM_VISUAL = "visual_forgery_detection"
