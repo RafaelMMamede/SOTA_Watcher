@@ -126,6 +126,43 @@ class CandidateSelectionTests(unittest.TestCase):
         self.assertEqual(summary.core_protected, 2)
         self.assertEqual(summary.recent_unfiltered, 1)
 
+    def test_generative_adversarial_network_does_not_trigger_core(self):
+        cfg = {
+            "candidate_selection": {
+                "enabled": True,
+                "historical_start_year": 2020,
+                "historical_through_year": 2024,
+                "recent_from_year": 2025,
+                "top_n_per_year_per_stream": 1,
+            },
+        }
+        papers = [
+            paper(
+                "gan",
+                year=2022,
+                citations=1,
+                topic="visual_forgery_detection",
+                title="Deepfake generation with generative adversarial networks",
+                abstract="We use generative adversarial networks for synthesis.",
+            ),
+            paper(
+                "adv",
+                year=2022,
+                citations=0,
+                topic="visual_forgery_detection",
+                title="Adversarial attacks against deepfake detection",
+                abstract="We evaluate adversarial examples.",
+            ),
+        ]
+        rows, _, _ = build_candidate_selection(papers, cfg)
+        by_id = {row["corpus_id"]: row for row in rows}
+        self.assertFalse(
+            by_id["gan"]["candidate_selection_core_protected"]
+        )
+        self.assertTrue(
+            by_id["adv"]["candidate_selection_core_protected"]
+        )
+
     def test_selection_persists_and_gates_metadata_queue(self):
         protocol = {
             "eligibility": {
