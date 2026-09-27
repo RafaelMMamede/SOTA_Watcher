@@ -1395,6 +1395,7 @@ class CorpusStore:
             if p.get("metadata_screening_status") == "screened"
             and p.get("metadata_screening_decision")
         )
+        candidate_run = self.latest_candidate_selection_run()
         candidate_selection_status = Counter(
             p.get("candidate_selection_status", "not_selected_yet")
             for p in papers
@@ -1409,6 +1410,24 @@ class CorpusStore:
             for p in papers
             if p.get("candidate_selection_status") == "selected"
             and p.get("candidate_selection_stream")
+        )
+        metadata_pool = (
+            [
+                p for p in papers
+                if p.get("candidate_selection_status") == "selected"
+            ]
+            if candidate_run
+            else papers
+        )
+        metadata_pool_status = Counter(
+            p.get("metadata_screening_status", "not_screened")
+            for p in metadata_pool
+        )
+        metadata_pool_decisions = Counter(
+            p.get("metadata_screening_decision")
+            for p in metadata_pool
+            if p.get("metadata_screening_status") == "screened"
+            and p.get("metadata_screening_decision")
         )
         papers_by_source = Counter()
         for paper in papers:
@@ -1429,24 +1448,44 @@ class CorpusStore:
             "candidate_selection_selected_by_stream": dict(
                 candidate_selection_streams
             ),
-            "last_candidate_selection_run": self.latest_candidate_selection_run(),
+            "last_candidate_selection_run": candidate_run,
             "last_metadata_screening_reset": self.latest_metadata_screening_reset(),
             "metadata_screening_status": dict(metadata_screening),
             "metadata_screening_decisions": dict(metadata_decisions),
+            "metadata_screening_selected_pool_status": dict(
+                metadata_pool_status
+            ),
+            "metadata_screening_selected_pool_decisions": dict(
+                metadata_pool_decisions
+            ),
             "metadata_screening_pending_unattempted": (
-                metadata_screening.get("not_screened", 0)
+                metadata_pool_status.get("not_screened", 0)
             ),
             "metadata_screening_retry_required": (
-                metadata_screening.get("error", 0)
+                metadata_pool_status.get("error", 0)
             ),
             "fulltext_gate": {
                 "eligible_after_metadata": (
-                    metadata_decisions.get("include", 0)
-                    + metadata_decisions.get("uncertain", 0)
+                    metadata_pool_decisions.get("include", 0)
+                    + metadata_pool_decisions.get("uncertain", 0)
                 ),
-                "excluded_after_metadata": metadata_decisions.get("exclude", 0),
-                "awaiting_metadata": metadata_screening.get("not_screened", 0),
-                "retry_required": metadata_screening.get("error", 0),
+                "excluded_after_metadata": (
+                    metadata_pool_decisions.get("exclude", 0)
+                ),
+                "awaiting_metadata": (
+                    metadata_pool_status.get("not_screened", 0)
+                ),
+                "retry_required": metadata_pool_status.get("error", 0),
+                "outside_candidate_selection": (
+                    len(papers) - len(metadata_pool)
+                    if candidate_run
+                    else 0
+                ),
+                "candidate_selection_unresolved": (
+                    candidate_selection_status.get("unresolved", 0)
+                    if candidate_run
+                    else 0
+                ),
             },
             "last_metadata_screening_batch": (
                 self.latest_metadata_screening_batch()
