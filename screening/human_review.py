@@ -141,7 +141,8 @@ def select_for_human_screening(
     reviewed = [
         paper
         for paper in papers
-        if paper.get("manual_decision") in {"include", "exclude", "uncertain"}
+        if paper.get("human_metadata_screening_decision")
+        in {"include", "exclude", "uncertain"}
     ]
     pending = (
         list(papers)
@@ -149,7 +150,7 @@ def select_for_human_screening(
         else [
             paper
             for paper in papers
-            if paper.get("manual_decision")
+            if paper.get("human_metadata_screening_decision")
             not in {"include", "exclude", "uncertain"}
         ]
     )
@@ -201,11 +202,13 @@ def run_human_screening(
         selected_only=selected_only,
         revisit=revisit,
     )
-    session_target = min(len(pending), limit) if limit is not None else len(pending)
-
     for session_index, paper in enumerate(pending, start=1):
         if limit is not None and summary.session_reviewed >= limit:
             break
+
+        # Refresh just before display so concurrent metadata-model progress is
+        # visible without rebuilding the human queue.
+        paper = store.get_paper(paper["corpus_id"]) or paper
 
         output_fn(
             format_human_screen_paper(
@@ -229,22 +232,22 @@ def run_human_screening(
                 return summary
 
             if answer in {"y", "yes"}:
-                store.set_human_review(
+                store.set_human_metadata_screening(
                     paper["corpus_id"],
-                    manual_decision="include",
-                    manual_reason="Human title/abstract screening: include.",
-                    notes=paper.get("notes", "") or "",
+                    decision="include",
+                    reason="Human title/abstract screening: include.",
+                    notes=paper.get("human_metadata_screening_notes", "") or "",
                 )
                 summary.session_reviewed += 1
                 summary.included += 1
                 break
 
             if answer in {"n", "no"}:
-                store.set_human_review(
+                store.set_human_metadata_screening(
                     paper["corpus_id"],
-                    manual_decision="exclude",
-                    manual_reason="Human title/abstract screening: exclude.",
-                    notes=paper.get("notes", "") or "",
+                    decision="exclude",
+                    reason="Human title/abstract screening: exclude.",
+                    notes=paper.get("human_metadata_screening_notes", "") or "",
                 )
                 summary.session_reviewed += 1
                 summary.excluded += 1
