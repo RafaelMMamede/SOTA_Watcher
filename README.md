@@ -277,6 +277,47 @@ The default full-text queue requires a current metadata assessment
 trigger PDF resolution/download. A human `manual_decision: include` can still
 advance a record, while a human `manual_decision: exclude` blocks full-text work.
 
+### Interactive human title/abstract screening
+
+A resumable human screening helper is available for manual title/abstract review:
+
+```bash
+python sota_watcher.py human-screen
+```
+
+By default it walks only the active candidate-selection pool and skips papers
+that already have a human title/abstract decision. Each paper displays its title,
+abstract, year, citations, citation rank/quota, selection reason, search stream,
+sources, publication type/venue, DOI/URL, and the current automated metadata
+screening decision when one exists.
+
+The prompt accepts:
+
+- `y` — include at title/abstract stage and allow the paper to advance;
+- `n` — exclude at title/abstract stage and block full-text retrieval;
+- `s` — skip only for the current session;
+- `q` — quit immediately.
+
+Every `y/n` decision is committed to SQLite before the next paper is shown, so
+interrupting or restarting the command resumes from the next undecided paper.
+These decisions are stored separately from final `manual_decision`: a human
+title/abstract inclusion means "advance to full text", not "final paper included".
+The automated metadata result remains independent and can still be compared with
+the human screen.
+
+Useful options:
+
+```bash
+python sota_watcher.py human-screen --limit 100
+python sota_watcher.py human-screen --revisit
+python sota_watcher.py human-screen --all
+```
+
+`--revisit` includes already human-screened records, while `--all` ignores
+the active candidate-selection gate. SQLite uses WAL mode with a short busy
+timeout, so the helper can coexist with ongoing model metadata screening, though
+running large write-heavy jobs concurrently may still reduce throughput.
+
 ## Full-text screening
 
 Review the eligibility criteria and ensure your configured Ollama model is
