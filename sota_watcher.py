@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 import argparse
 import json
@@ -15,7 +16,8 @@ from utils.protocol import validate_protocol
 from utils.corpus_store import CorpusStore
 from screening import screen_papers
 from screening.queue import screen_saved_corpus
-from screening.metadata_queue import screen_saved_metadata
+from screening.candidate_selection import run_candidate_selection
+from screening.metadata_queue import metadata_config, screen_saved_metadata
 from utils.reporting import decorate, review_counts, summary_markdown
 from fulltext._common import read_json
 
@@ -117,6 +119,49 @@ def command_status(config):
     print(json.dumps(status, indent=2, sort_keys=True))
 
 
+def command_select_candidates(args, config):
+    with CorpusStore(_store_path(config)) as store:
+        summary = run_candidate_selection(
+            store,
+            config,
+            top_n=args.top_n,
+            dry_run=args.dry_run,
+        )
+    print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
+
+
+def command_reset_metadata_screening(args, config):
+    if not args.yes:
+        raise SystemExit(
+            "Refusing to reset metadata screening without --yes. "
+            "The active machine screening state will be archived first."
+        )
+
+    cfg = metadata_config(config)
+    root = Path(cfg["artifacts_dir"])
+    artifact_archive = ""
+
+    if root.exists():
+        archive_root = root.parent / f"{root.name}_archive"
+        archive_root.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        destination = archive_root / f"reset_{stamp}"
+        suffix = 1
+        while destination.exists():
+            destination = archive_root / f"reset_{stamp}_{suffix}"
+            suffix += 1
+        root.rename(destination)
+        artifact_archive = str(destination)
+
+    with CorpusStore(_store_path(config)) as store:
+        result = store.reset_metadata_screening(
+            artifact_archive=artifact_archive,
+            reason=args.reason or "",
+        )
+
+    print(json.dumps(result, indent=2, sort_keys=True))
+
+
 def command_screen_metadata(args, config, terms):
     retry_error = args.retry == "error"
     limit = args.limit
@@ -184,6 +229,43 @@ def build_parser():
 
     discover = sub.add_parser('discover', help='Run discovery into the persistent corpus.')
     discover.add_argument('--resume', action='store_true', help='Resume matching saved discovery work.')
+
+    selection = sub.add_parser(
+        'select-candidates',
+        help=(
+            'Apply core protection and year/stream citation selection '
+            'before metadata screening.'
+        ),
+    )
+    selection.add_argument(
+        '--top-n',
+        type=int,
+        default=None,
+        help='Override top cited contextual papers per year and stream.',
+    )
+    selection.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Write a manifest and report counts without activating selection.',
+    )
+
+    reset_metadata = sub.add_parser(
+        'reset-metadata-screening',
+        help=(
+            'Archive and clear active title/abstract screening decisions '
+            'without changing discovery or human review.'
+        ),
+    )
+    reset_metadata.add_argument(
+        '--yes',
+        action='store_true',
+        help='Required acknowledgement for resetting active metadata state.',
+    )
+    reset_metadata.add_argument(
+        '--reason',
+        default='',
+        help='Optional audit note explaining why the screening state was reset.',
+    )
 
     metadata = sub.add_parser(
         'screen-metadata',
@@ -258,6 +340,10 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == 'discover':
         command_discover(args, config, _load_protocol(config))
+    elif args.command == 'select-candidates':
+        command_select_candidates(args, config)
+    elif args.command == 'reset-metadata-screening':
+        command_reset_metadata_screening(args, config)
     elif args.command == 'screen-metadata':
         command_screen_metadata(args, config, _load_protocol(config))
     elif args.command == 'screen':
