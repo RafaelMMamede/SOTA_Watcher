@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -399,7 +400,24 @@ def run_candidate_selection(
     manifest_dir = Path(policy["manifest_dir"])
     manifest_dir.mkdir(parents=True, exist_ok=True)
     digest = selection_policy_hash(policy)
-    manifest = manifest_dir / f"candidate_selection_{digest[:12]}.json"
+    if dry_run:
+        manifest = (
+            manifest_dir
+            / f"candidate_selection_{digest[:12]}_dry_run.json"
+        )
+    else:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        manifest = (
+            manifest_dir
+            / f"candidate_selection_{digest[:12]}_{stamp}.json"
+        )
+        suffix = 1
+        while manifest.exists():
+            manifest = (
+                manifest_dir
+                / f"candidate_selection_{digest[:12]}_{stamp}_{suffix}.json"
+            )
+            suffix += 1
 
     manifest_payload = {
         "policy": policy,
