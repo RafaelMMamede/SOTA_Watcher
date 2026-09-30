@@ -14,6 +14,7 @@ from utils.discovery_log import DiscoveryLog
 from utils.eligibility import initialize_eligibility
 from utils.protocol import validate_protocol
 from utils.corpus_store import CorpusStore
+from utils.corpus_deduplication import run_corpus_deduplication
 from screening import screen_papers
 from screening.queue import screen_saved_corpus
 from screening.candidate_selection import run_candidate_selection
@@ -118,6 +119,38 @@ def command_status(config):
         status = store.status()
         status["discovery"] = store.discovery_status()
     print(json.dumps(status, indent=2, sort_keys=True))
+
+
+def command_deduplicate_corpus(args, config):
+    with CorpusStore(_store_path(config)) as store:
+        active_selection = store.latest_candidate_selection_run()
+        summary = run_corpus_deduplication(
+            store,
+            config,
+            apply=args.apply,
+            include_fuzzy=not args.exact_only,
+        )
+
+        selection_summary = None
+        if args.apply and active_selection:
+            selection_config = dict(config)
+            selection_config["candidate_selection"] = dict(
+                active_selection["policy"]
+            )
+            selection_summary = run_candidate_selection(
+                store,
+                selection_config,
+            )
+
+    payload = {
+        "deduplication": summary.__dict__,
+        "candidate_selection_rerun": (
+            selection_summary.__dict__
+            if selection_summary is not None
+            else None
+        ),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def command_select_candidates(args, config):
@@ -243,6 +276,33 @@ def build_parser():
 
     discover = sub.add_parser('discover', help='Run discovery into the persistent corpus.')
     discover.add_argument('--resume', action='store_true', help='Resume matching saved discovery work.')
+
+    dedup = sub.add_parser(
+        'deduplicate-corpus',
+        help=(
+            'Find or merge high-confidence bibliographic duplicates while '
+            'preserving screening and human-review state.'
+        ),
+    )
+    dedup_mode = dedup.add_mutually_exclusive_group()
+    dedup_mode.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Preview duplicate clusters without modifying the corpus (default).',
+    )
+    dedup_mode.add_argument(
+        '--apply',
+        action='store_true',
+        help='Back up the SQLite corpus and apply safe duplicate merges.',
+    )
+    dedup.add_argument(
+        '--exact-only',
+        action='store_true',
+        help=(
+            'Disable the high-confidence fuzzy title/author/year matcher and '
+            'merge only exact normalized-title matches.'
+        ),
+    )
 
     selection = sub.add_parser(
         'select-candidates',
@@ -380,6 +440,8 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == 'discover':
         command_discover(args, config, _load_protocol(config))
+    elif args.command == 'deduplicate-corpus':
+        command_deduplicate_corpus(args, config)
     elif args.command == 'select-candidates':
         command_select_candidates(args, config)
     elif args.command == 'reset-metadata-screening':
