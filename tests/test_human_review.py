@@ -65,6 +65,53 @@ class HumanReviewTests(unittest.TestCase):
         )
         return store, ids
 
+    def test_core_only_filters_to_core_protected_candidates(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, ids = self._selected_store(folder)
+            try:
+                records = []
+                for index, corpus_id in enumerate(ids):
+                    is_core = index == 0
+                    records.append({
+                        "corpus_id": corpus_id,
+                        "candidate_selection_title": f"Paper {index}",
+                        "candidate_selection_search_topics": ["adversarial_vision"],
+                        "candidate_selection_status": "selected",
+                        "candidate_selection_stream": "adversarial",
+                        "candidate_selection_reason": (
+                            "core_protected" if is_core else "citation_top_n"
+                        ),
+                        "candidate_selection_year": 2022 + index,
+                        "candidate_selection_citation_count": 100 - index,
+                        "candidate_selection_citation_rank": (
+                            None if is_core else index + 1
+                        ),
+                        "candidate_selection_citation_quota": 100,
+                        "candidate_selection_core_protected": is_core,
+                        "candidate_selection_core_reason": (
+                            "deepfake_and_adversarial_concepts" if is_core else ""
+                        ),
+                        "candidate_selection_citation_metric": "test",
+                    })
+                store.replace_candidate_selection(
+                    {"top_n_per_year_per_stream": 100},
+                    records,
+                    {"selected": 3},
+                )
+
+                pending, summary = select_for_human_screening(
+                    store,
+                    core_only=True,
+                )
+                self.assertEqual(
+                    [paper["corpus_id"] for paper in pending],
+                    [ids[0]],
+                )
+                self.assertEqual(summary.eligible_pool, 1)
+                self.assertEqual(summary.remaining, 1)
+            finally:
+                store.close()
+
     def test_human_screen_is_resumable_and_separate_from_final_review(self):
         with tempfile.TemporaryDirectory() as folder:
             store, ids = self._selected_store(folder)
