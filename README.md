@@ -167,6 +167,56 @@ guaranteed for a changing remote repository. Missing v1 dates fail the harvest.
 A result/page cap is explicitly incomplete; matching totals are unknown until
 local harvesting ends. Capped OAI results are in harvest order, not globally ranked.
 
+## Post-discovery deduplication
+
+After discovery, cross-provider manifestations of the same study can remain when
+they do not share a stable identifier bridge (for example an arXiv preprint and
+a later conference record). A separate bibliographic deduplication pass is
+available so this cleanup can be performed after screening has already started.
+
+Preview duplicate clusters without modifying SQLite:
+
+```bash
+python sota_watcher.py deduplicate-corpus --dry-run
+```
+
+The preview writes an auditable JSON manifest under `deduplication/`. Automatic
+matches require either:
+
+- the same normalized title, publication years within ±1, and at least 60% author
+  token containment; or
+- the same first three informative title tokens, publication years within ±1,
+  at least 60% author-token containment, title similarity ≥0.965, and title-token
+  Jaccard similarity ≥0.90.
+
+To disable the second high-confidence fuzzy rule:
+
+```bash
+python sota_watcher.py deduplicate-corpus --dry-run --exact-only
+```
+
+Apply the safe merges only after reviewing the manifest:
+
+```bash
+python sota_watcher.py deduplicate-corpus --apply
+```
+
+Apply mode first creates a SQLite backup under `deduplication/backups/`. The
+published conference/journal manifestation is preferred as the canonical record
+when available, while identifiers, provenance and metadata variants are merged.
+
+Existing screening work is preserved. Human title/abstract decisions transfer to
+the canonical paper. Matching decisions remain unchanged; **any disagreement
+between duplicate human title/abstract decisions resolves to `include`** and an
+audit reason is stored. Conflicting final `manual_decision` values are considered
+higher-stakes and therefore block automatic merging of that cluster.
+
+For automated metadata screening, a successful `screened` result is preferred
+over an `error` result rather than simply keeping the newest row. If an active
+candidate-selection run exists, applying deduplication automatically reruns that
+same selection policy on the deduplicated corpus. Existing metadata and human
+screening decisions are not reset.
+
 ## Candidate selection
 
 For the large production corpus, candidate selection is a deterministic gate
