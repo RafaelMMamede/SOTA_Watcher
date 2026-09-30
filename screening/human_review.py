@@ -127,6 +127,7 @@ def select_for_human_screening(
     store,
     *,
     selected_only: bool = True,
+    core_only: bool = False,
     revisit: bool = False,
 ) -> tuple[list[dict], HumanScreenSummary]:
     papers = store.all_papers()
@@ -136,6 +137,14 @@ def select_for_human_screening(
             paper
             for paper in papers
             if paper.get("candidate_selection_status") == "selected"
+        ]
+
+    if core_only:
+        papers = [
+            paper
+            for paper in papers
+            if bool(paper.get("candidate_selection_core_protected"))
+            or paper.get("candidate_selection_reason") == "core_protected"
         ]
 
     reviewed = [
@@ -189,6 +198,7 @@ def run_human_screening(
     *,
     limit: int | None = None,
     selected_only: bool = True,
+    core_only: bool = False,
     revisit: bool = False,
     input_fn=input,
     output_fn=print,
@@ -200,6 +210,7 @@ def run_human_screening(
     pending, summary = select_for_human_screening(
         store,
         selected_only=selected_only,
+        core_only=core_only,
         revisit=revisit,
     )
     for session_index, paper in enumerate(pending, start=1):
