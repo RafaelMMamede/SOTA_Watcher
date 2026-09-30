@@ -169,6 +169,7 @@ def command_human_screen(args, config):
             store,
             limit=args.limit,
             selected_only=not args.all,
+            core_only=args.core_only,
             revisit=args.revisit,
         )
     print("\nSession summary:")
@@ -294,6 +295,11 @@ def build_parser():
         '--all',
         action='store_true',
         help='Review the whole corpus instead of only active selected candidates.',
+    )
+    human.add_argument(
+        '--core-only',
+        action='store_true',
+        help='Review only core-protected candidates.',
     )
     human.add_argument(
         '--revisit',
