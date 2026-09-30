@@ -388,23 +388,44 @@ class CorpusStore:
                 if target_human_metadata:
                     t = dict(target_human_metadata)
                     s = dict(source_human_metadata)
-                    if (
-                        t["decision"]
-                        and s["decision"]
-                        and t["decision"] != s["decision"]
-                    ):
-                        raise ValueError(
-                            "Cannot merge corpus records with conflicting "
-                            "human metadata-screening decisions."
+                    decisions = [
+                        value
+                        for value in (t["decision"], s["decision"])
+                        if value
+                    ]
+                    disagreement = (
+                        len(set(decisions)) > 1
+                    )
+                    if disagreement:
+                        merged_decision = "include"
+                        merged_reason = (
+                            "Duplicate records had conflicting human "
+                            "title/abstract screening decisions "
+                            f"({t['decision'] or 'empty'} vs "
+                            f"{s['decision'] or 'empty'}); retained as "
+                            "include according to the conservative "
+                            "duplicate-merge policy."
                         )
+                    else:
+                        merged_decision = (
+                            t["decision"] or s["decision"]
+                        )
+                        merged_reason = (
+                            t["reason"] or s["reason"]
+                        )
+                    merged_notes = " | ".join(
+                        value
+                        for value in (t["notes"], s["notes"])
+                        if value
+                    )
                     self.conn.execute(
                         """UPDATE human_metadata_screening
                            SET decision=?, reason=?, notes=?, updated_at=?
                            WHERE corpus_id=?""",
                         (
-                            t["decision"] or s["decision"],
-                            t["reason"] or s["reason"],
-                            t["notes"] or s["notes"],
+                            merged_decision,
+                            merged_reason,
+                            merged_notes,
                             utc_now(),
                             target,
                         ),
@@ -488,10 +509,32 @@ class CorpusStore:
                     "status", "decision", "signature", "result_json",
                     "error_type", "error_message", "artifact_folder", "updated_at"
                 )
+                status_priority = {
+                    "screened": 3,
+                    "error": 1,
+                    "not_screened": 0,
+                    "": 0,
+                }
+                source_priority = status_priority.get(
+                    source_metadata_screening["status"],
+                    0,
+                )
+                target_priority = (
+                    status_priority.get(
+                        target_metadata_screening["status"],
+                        0,
+                    )
+                    if target_metadata_screening
+                    else -1
+                )
                 use_source = (
                     target_metadata_screening is None
-                    or str(source_metadata_screening["updated_at"])
-                    > str(target_metadata_screening["updated_at"])
+                    or source_priority > target_priority
+                    or (
+                        source_priority == target_priority
+                        and str(source_metadata_screening["updated_at"])
+                        > str(target_metadata_screening["updated_at"])
+                    )
                 )
                 if use_source:
                     self.conn.execute(
@@ -515,6 +558,41 @@ class CorpusStore:
                     )
 
             self.conn.execute("DELETE FROM papers WHERE corpus_id=?", (source,))
+
+    def merge_corpus_ids(
+        self,
+        target: str,
+        others: list[str],
+    ) -> str:
+        """Merge existing corpus IDs into target while preserving review state."""
+        clean = [
+            corpus_id
+            for corpus_id in others
+            if corpus_id and corpus_id != target
+        ]
+        if not clean:
+            return target
+        with self.transaction():
+            target_row = self.conn.execute(
+                "SELECT corpus_id FROM papers WHERE corpus_id=?",
+                (target,),
+            ).fetchone()
+            if not target_row:
+                raise KeyError(f"Unknown target corpus_id: {target}")
+            missing = [
+                corpus_id
+                for corpus_id in clean
+                if self.conn.execute(
+                    "SELECT 1 FROM papers WHERE corpus_id=?",
+                    (corpus_id,),
+                ).fetchone() is None
+            ]
+            if missing:
+                raise KeyError(
+                    "Unknown source corpus IDs: " + ", ".join(missing)
+                )
+            self._merge_ids(target, clean)
+        return target
 
     def _insert_provenance(self, corpus_id: str, paper: dict):
         entries = decode(paper.get("provenance"), [])
