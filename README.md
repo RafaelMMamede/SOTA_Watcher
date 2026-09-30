@@ -309,10 +309,13 @@ Useful options:
 
 ```bash
 python sota_watcher.py human-screen --limit 100
+python sota_watcher.py human-screen --core-only
 python sota_watcher.py human-screen --revisit
 python sota_watcher.py human-screen --all
 ```
 
+`--core-only` restricts the queue to candidates marked `core_protected`;
+these remain resumable and already-reviewed core papers are skipped normally.
 `--revisit` includes already human-screened records, while `--all` ignores
 the active candidate-selection gate. SQLite uses WAL mode with a short busy
 timeout, so the helper can coexist with ongoing model metadata screening, though
