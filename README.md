@@ -223,18 +223,33 @@ For the large production corpus, candidate selection is a deterministic gate
 before title/abstract screening. It does **not** modify or delete discovery
 records.
 
-The default citation-aware policy is:
+The default candidate-selection policy is:
 
-- protect every plausible core paper regardless of citation count;
+- protect every plausible core paper regardless of citation count or venue;
 - automatically protect papers retrieved by both search families;
 - also protect title/abstract records containing both deepfake/forgery and
   adversarial/robustness concepts;
 - for contextual papers from 2020--2024, rank separately within
-  publication year × retrieval stream and retain the top 100 cited papers;
-- include all papers tied with the 100th paper;
-- do not apply citation ranking to 2025--2026 records;
+  publication year × retrieval stream and retain the top 50 cited papers;
+- include all papers tied with the 50th paper;
+- for non-core papers from 2025 onward, avoid immature citation counts and
+  retain only records whose merged venue metadata matches the pre-specified
+  reputable-venue whitelist in `candidate_selection.recent_venue_filter`;
+- inspect both the canonical `venue` and merged `metadata_variants.venue`
+  values, so an arXiv manifestation does not hide a matched published venue;
+- keep recent records with no usable venue metadata as `unresolved` rather
+  than silently excluding them;
 - keep historical records without citation counts as `unresolved` rather than
   treating missing citations as zero.
+
+The recent venue whitelist is explicit and auditable. Each venue has a canonical
+name plus aliases to accommodate provider naming differences. Known recent
+venues outside the whitelist receive
+`recent_venue_not_whitelisted`; accepted records receive
+`recent_reputable_venue`; missing venue metadata receives
+`recent_venue_unavailable`. The manifest also reports recent accepted counts by
+year, stream, and canonical venue. See `config.example.yaml` for the initial
+CV/ML/security/journal whitelist.
 
 Preview the reduction without changing the active corpus state:
 
