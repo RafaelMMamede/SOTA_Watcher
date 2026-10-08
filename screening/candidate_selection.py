@@ -156,7 +156,7 @@ def candidate_selection_config(config: dict) -> dict:
         },
         "top_n_per_year_per_stream": explicit.get(
             "top_n_per_year_per_stream",
-            100,
+            50,
         ),
         "include_ties": explicit.get("include_ties", True),
         "protect_both_streams": explicit.get("protect_both_streams", True),
