@@ -9,6 +9,7 @@ import json
 import math
 from pathlib import Path
 import re
+import unicodedata
 
 from utils.deduplication import decode, present
 
@@ -68,6 +69,9 @@ class CandidateSelectionSummary:
     unresolved: int = 0
     core_protected: int = 0
     recent_unfiltered: int = 0
+    recent_venue_selected: int = 0
+    recent_venue_not_whitelisted: int = 0
+    recent_venue_unavailable: int = 0
     citation_selected: int = 0
     citation_below_quota: int = 0
     citation_unavailable: int = 0
@@ -76,19 +80,80 @@ class CandidateSelectionSummary:
     selected_by_stream: dict | None = None
     status_by_stream: dict | None = None
     selected_by_year: dict | None = None
+    recent_venue_selected_by_stream: dict | None = None
+    recent_venue_selected_by_year: dict | None = None
+    recent_venue_selected_by_venue: dict | None = None
     manifest_path: str = ""
     run_id: str = ""
     dry_run: bool = False
 
 
+def _normalize_venue_policy(raw) -> list[dict]:
+    if raw is None:
+        return []
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError(
+            "candidate_selection.recent_venue_filter.venues must be a list."
+        )
+
+    result = []
+    seen_names = set()
+    for item in raw:
+        if isinstance(item, str):
+            name = item.strip()
+            aliases = [name]
+        elif isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            aliases = item.get("aliases", [])
+            if isinstance(aliases, str):
+                aliases = [aliases]
+            if not isinstance(aliases, (list, tuple)):
+                raise ValueError(
+                    "Each recent venue aliases field must be a list or string."
+                )
+            aliases = [str(value).strip() for value in aliases if str(value).strip()]
+            if name and name not in aliases:
+                aliases.insert(0, name)
+        else:
+            raise ValueError(
+                "Each recent venue must be a string or {name, aliases} mapping."
+            )
+
+        if not name:
+            raise ValueError("Each recent venue must have a non-empty name.")
+        if not aliases:
+            raise ValueError(
+                f"Recent venue {name!r} must define at least one alias."
+            )
+        key = name.casefold()
+        if key in seen_names:
+            raise ValueError(f"Duplicate recent venue name: {name}")
+        seen_names.add(key)
+        result.append({"name": name, "aliases": aliases})
+    return result
+
+
 def candidate_selection_config(config: dict) -> dict:
     explicit = config.get("candidate_selection", {})
+    recent_venue_filter = explicit.get("recent_venue_filter", {})
+    if recent_venue_filter is None:
+        recent_venue_filter = {}
+    if not isinstance(recent_venue_filter, dict):
+        raise ValueError(
+            "candidate_selection.recent_venue_filter must be a mapping."
+        )
     output_dir = config.get("output_dir", "output")
     return {
         "enabled": explicit.get("enabled", False),
         "historical_start_year": explicit.get("historical_start_year", 2020),
         "historical_through_year": explicit.get("historical_through_year", 2024),
         "recent_from_year": explicit.get("recent_from_year", 2025),
+        "recent_venue_filter": {
+            "enabled": recent_venue_filter.get("enabled", False),
+            "venues": _normalize_venue_policy(
+                recent_venue_filter.get("venues", [])
+            ),
+        },
         "top_n_per_year_per_stream": explicit.get(
             "top_n_per_year_per_stream",
             100,
@@ -135,6 +200,16 @@ def _validate_config(cfg: dict):
             "candidate_selection.recent_from_year must be after "
             "historical_through_year."
         )
+    recent_filter = cfg["recent_venue_filter"]
+    if type(recent_filter.get("enabled")) is not bool:
+        raise ValueError(
+            "candidate_selection.recent_venue_filter.enabled must be boolean."
+        )
+    if recent_filter["enabled"] and not recent_filter["venues"]:
+        raise ValueError(
+            "candidate_selection.recent_venue_filter.venues cannot be empty "
+            "when the recent venue filter is enabled."
+        )
 
 
 def _topics(paper: dict) -> list[str]:
@@ -171,6 +246,64 @@ def _normalized_text(paper: dict) -> str:
 
 def _contains_any(text: str, terms) -> bool:
     return any(str(term).casefold() in text for term in terms if str(term).strip())
+
+
+def _normalize_venue(value) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(
+        char for char in text
+        if not unicodedata.combining(char)
+    ).casefold()
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def _paper_venues(paper: dict) -> list[str]:
+    values = [paper.get("venue")]
+    variants = decode(paper.get("metadata_variants"), {})
+    if isinstance(variants, dict):
+        alternate = variants.get("venue", [])
+        if isinstance(alternate, (list, tuple)):
+            values.extend(alternate)
+        elif present(alternate):
+            values.append(alternate)
+
+    result = []
+    seen = set()
+    for value in values:
+        if not present(value):
+            continue
+        venue = str(value).strip()
+        normalized = _normalize_venue(venue)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(venue)
+    return result
+
+
+def _recent_venue_match(
+    paper: dict,
+    cfg: dict,
+) -> tuple[str, list[str]]:
+    observed = _paper_venues(paper)
+    normalized_observed = [
+        (_normalize_venue(value), value)
+        for value in observed
+    ]
+
+    for venue_entry in cfg["recent_venue_filter"]["venues"]:
+        for alias in venue_entry["aliases"]:
+            normalized_alias = _normalize_venue(alias)
+            if not normalized_alias:
+                continue
+            needle = f" {normalized_alias} "
+            for normalized_venue, _ in normalized_observed:
+                haystack = f" {normalized_venue} "
+                if (
+                    normalized_alias == normalized_venue
+                    or needle in haystack
+                ):
+                    return venue_entry["name"], observed
+    return "", observed
 
 
 def is_potential_core(paper: dict, cfg: dict) -> tuple[bool, str]:
@@ -249,10 +382,13 @@ def build_candidate_selection(
         stream = paper_stream(paper)
         protected, protected_reason = is_potential_core(paper, cfg)
 
+        observed_venues = _paper_venues(paper)
         row = {
             "corpus_id": corpus_id,
             "candidate_selection_title": str(paper.get("title") or ""),
             "candidate_selection_search_topics": _topics(paper),
+            "candidate_selection_venues": observed_venues,
+            "candidate_selection_recent_venue_match": "",
             "candidate_selection_status": "",
             "candidate_selection_stream": stream,
             "candidate_selection_reason": "",
@@ -274,8 +410,29 @@ def build_candidate_selection(
             row["candidate_selection_status"] = "unresolved"
             row["candidate_selection_reason"] = "missing_year"
         elif year >= cfg["recent_from_year"]:
-            row["candidate_selection_status"] = "selected"
-            row["candidate_selection_reason"] = "recent_unfiltered"
+            if not cfg["recent_venue_filter"]["enabled"]:
+                row["candidate_selection_status"] = "selected"
+                row["candidate_selection_reason"] = "recent_unfiltered"
+            elif stream not in {"visual", "adversarial"}:
+                row["candidate_selection_status"] = "unresolved"
+                row["candidate_selection_reason"] = "other_stream"
+            else:
+                venue_match, observed_venues = _recent_venue_match(paper, cfg)
+                row["candidate_selection_venues"] = observed_venues
+                row["candidate_selection_recent_venue_match"] = venue_match
+                if venue_match:
+                    row["candidate_selection_status"] = "selected"
+                    row["candidate_selection_reason"] = "recent_reputable_venue"
+                elif observed_venues:
+                    row["candidate_selection_status"] = "not_selected"
+                    row["candidate_selection_reason"] = (
+                        "recent_venue_not_whitelisted"
+                    )
+                else:
+                    row["candidate_selection_status"] = "unresolved"
+                    row["candidate_selection_reason"] = (
+                        "recent_venue_unavailable"
+                    )
         elif (
             cfg["historical_start_year"]
             <= year
@@ -349,6 +506,21 @@ def build_candidate_selection(
             row["candidate_selection_status"]
         ] += 1
 
+    recent_venue_rows = [
+        row for row in records
+        if row["candidate_selection_reason"] == "recent_reputable_venue"
+    ]
+    recent_venue_selected_by_stream = Counter(
+        row["candidate_selection_stream"] for row in recent_venue_rows
+    )
+    recent_venue_selected_by_year = Counter(
+        str(row["candidate_selection_year"]) for row in recent_venue_rows
+    )
+    recent_venue_selected_by_venue = Counter(
+        row["candidate_selection_recent_venue_match"]
+        for row in recent_venue_rows
+    )
+
     summary = CandidateSelectionSummary(
         total=len(records),
         selected=status_counts["selected"],
@@ -356,6 +528,11 @@ def build_candidate_selection(
         unresolved=status_counts["unresolved"],
         core_protected=reason_counts["core_protected"],
         recent_unfiltered=reason_counts["recent_unfiltered"],
+        recent_venue_selected=reason_counts["recent_reputable_venue"],
+        recent_venue_not_whitelisted=reason_counts[
+            "recent_venue_not_whitelisted"
+        ],
+        recent_venue_unavailable=reason_counts["recent_venue_unavailable"],
         citation_selected=reason_counts["citation_top_n"],
         citation_below_quota=reason_counts["citation_below_quota"],
         citation_unavailable=reason_counts["citation_unavailable"],
@@ -368,6 +545,15 @@ def build_candidate_selection(
         },
         selected_by_year=dict(
             sorted(selected_by_year.items(), key=lambda item: item[0])
+        ),
+        recent_venue_selected_by_stream=dict(
+            sorted(recent_venue_selected_by_stream.items())
+        ),
+        recent_venue_selected_by_year=dict(
+            sorted(recent_venue_selected_by_year.items())
+        ),
+        recent_venue_selected_by_venue=dict(
+            sorted(recent_venue_selected_by_venue.items())
         ),
     )
     return records, cfg, summary
