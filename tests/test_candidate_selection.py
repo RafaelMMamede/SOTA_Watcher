@@ -21,6 +21,8 @@ def paper(
     title="General paper",
     abstract="Computer vision research.",
     topics=None,
+    venue=None,
+    metadata_variants=None,
 ):
     result = {
         "corpus_id": corpus_id,
@@ -33,6 +35,10 @@ def paper(
         result["search_topics"] = topics
     else:
         result["search_topic"] = topic
+    if venue is not None:
+        result["venue"] = venue
+    if metadata_variants is not None:
+        result["metadata_variants"] = metadata_variants
     return result
 
 
@@ -162,6 +168,126 @@ class CandidateSelectionTests(unittest.TestCase):
         )
         self.assertTrue(
             by_id["adv"]["candidate_selection_core_protected"]
+        )
+
+    def test_recent_non_core_is_filtered_by_reputable_venue(self):
+        cfg = {
+            "candidate_selection": {
+                "enabled": True,
+                "historical_start_year": 2020,
+                "historical_through_year": 2024,
+                "recent_from_year": 2025,
+                "top_n_per_year_per_stream": 1,
+                "recent_venue_filter": {
+                    "enabled": True,
+                    "venues": [
+                        {
+                            "name": "CVPR",
+                            "aliases": [
+                                "CVPR",
+                                (
+                                    "Conference on Computer Vision "
+                                    "and Pattern Recognition"
+                                ),
+                            ],
+                        },
+                    ],
+                },
+            },
+        }
+        papers = [
+            paper(
+                "cvpr",
+                year=2026,
+                topic="visual_forgery_detection",
+                venue=(
+                    "Proceedings of the IEEE/CVF Conference on Computer "
+                    "Vision and Pattern Recognition"
+                ),
+            ),
+            paper(
+                "arxiv",
+                year=2026,
+                topic="visual_forgery_detection",
+                venue="arXiv",
+            ),
+            paper(
+                "missing-venue",
+                year=2026,
+                topic="adversarial_vision",
+            ),
+            paper(
+                "published-variant",
+                year=2025,
+                topic="adversarial_vision",
+                venue="arXiv",
+                metadata_variants={
+                    "venue": [
+                        "arXiv",
+                        (
+                            "IEEE/CVF Conference on Computer Vision "
+                            "and Pattern Recognition"
+                        ),
+                    ],
+                },
+            ),
+            paper(
+                "recent-core",
+                year=2026,
+                topic="visual_forgery_detection",
+                title="Adversarial attacks against deepfake detectors",
+                venue="arXiv",
+            ),
+        ]
+
+        rows, _, summary = build_candidate_selection(papers, cfg)
+        by_id = {row["corpus_id"]: row for row in rows}
+
+        self.assertEqual(
+            by_id["cvpr"]["candidate_selection_reason"],
+            "recent_reputable_venue",
+        )
+        self.assertEqual(
+            by_id["cvpr"]["candidate_selection_recent_venue_match"],
+            "CVPR",
+        )
+        self.assertEqual(
+            by_id["arxiv"]["candidate_selection_status"],
+            "not_selected",
+        )
+        self.assertEqual(
+            by_id["arxiv"]["candidate_selection_reason"],
+            "recent_venue_not_whitelisted",
+        )
+        self.assertEqual(
+            by_id["missing-venue"]["candidate_selection_status"],
+            "unresolved",
+        )
+        self.assertEqual(
+            by_id["missing-venue"]["candidate_selection_reason"],
+            "recent_venue_unavailable",
+        )
+        self.assertEqual(
+            by_id["published-variant"]["candidate_selection_status"],
+            "selected",
+        )
+        self.assertEqual(
+            by_id["published-variant"][
+                "candidate_selection_recent_venue_match"
+            ],
+            "CVPR",
+        )
+        self.assertEqual(
+            by_id["recent-core"]["candidate_selection_reason"],
+            "core_protected",
+        )
+        self.assertEqual(summary.core_protected, 1)
+        self.assertEqual(summary.recent_venue_selected, 2)
+        self.assertEqual(summary.recent_venue_not_whitelisted, 1)
+        self.assertEqual(summary.recent_venue_unavailable, 1)
+        self.assertEqual(
+            summary.recent_venue_selected_by_venue,
+            {"CVPR": 2},
         )
 
     def test_selection_persists_and_gates_metadata_queue(self):
