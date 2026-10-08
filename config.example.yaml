@@ -53,7 +53,73 @@ candidate_selection:
   historical_start_year: 2020
   historical_through_year: 2024
   recent_from_year: 2025
-  top_n_per_year_per_stream: 100
+  top_n_per_year_per_stream: 50
+  # Recent non-core papers are too new for stable citation ranking. Keep them
+  # only when a merged venue value matches this pre-specified whitelist.
+  # Core-protected papers bypass this filter. Missing recent venue metadata is
+  # kept unresolved rather than silently excluded.
+  recent_venue_filter:
+    enabled: true
+    venues:
+      - name: CVPR
+        aliases:
+          - CVPR
+          - Conference on Computer Vision and Pattern Recognition
+      - name: ICCV
+        aliases:
+          - ICCV
+          - International Conference on Computer Vision
+      - name: ECCV
+        aliases:
+          - ECCV
+          - European Conference on Computer Vision
+      - name: NeurIPS
+        aliases:
+          - NeurIPS
+          - Neural Information Processing Systems
+      - name: ICML
+        aliases:
+          - ICML
+          - International Conference on Machine Learning
+      - name: ICLR
+        aliases:
+          - ICLR
+          - International Conference on Learning Representations
+      - name: AAAI
+        aliases:
+          - AAAI
+          - AAAI Conference on Artificial Intelligence
+      - name: IJCAI
+        aliases:
+          - IJCAI
+          - International Joint Conference on Artificial Intelligence
+      - name: IEEE S&P
+        aliases:
+          - IEEE Symposium on Security and Privacy
+      - name: USENIX Security
+        aliases:
+          - USENIX Security
+          - USENIX Security Symposium
+      - name: ACM CCS
+        aliases:
+          - ACM CCS
+          - ACM Conference on Computer and Communications Security
+      - name: NDSS
+        aliases:
+          - NDSS
+          - Network and Distributed System Security Symposium
+      - name: TPAMI
+        aliases:
+          - TPAMI
+          - IEEE Transactions on Pattern Analysis and Machine Intelligence
+      - name: IJCV
+        aliases:
+          - IJCV
+          - International Journal of Computer Vision
+      - name: TIFS
+        aliases:
+          - TIFS
+          - IEEE Transactions on Information Forensics and Security
   # Include all papers tied with the Nth paper rather than breaking citation ties.
   include_ties: true
   # A paper retrieved by both search families is treated as a potential core paper.
