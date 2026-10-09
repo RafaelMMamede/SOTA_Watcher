@@ -73,6 +73,20 @@ candidate_selection:
         aliases:
           - ECCV
           - European Conference on Computer Vision
+      - name: ACM MM
+        aliases:
+          - ACM MM
+          - ACM Multimedia
+          - ACM International Conference on Multimedia
+      - name: WACV
+        aliases:
+          - WACV
+          - Winter Conference on Applications of Computer Vision
+          - IEEE/CVF Winter Conference on Applications of Computer Vision
+      - name: BMVC
+        aliases:
+          - BMVC
+          - British Machine Vision Conference
       - name: NeurIPS
         aliases:
           - NeurIPS
