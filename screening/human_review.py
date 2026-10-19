@@ -164,8 +164,9 @@ def select_for_human_screening(
         ]
     )
 
-    # Stable, auditable order. Core first, then historical citation selections,
-    # then recent context; corpus_id breaks ties deterministically.
+    # Core first, then historical citation selections and recent context.
+    # Within each selection group, review model-uncertain papers first.
+    # Year/rank/corpus_id provide stable ordering for the remaining ties.
     reason_priority = {
         "core_protected": 0,
         "citation_top_n": 1,
@@ -177,6 +178,7 @@ def select_for_human_screening(
                 paper.get("candidate_selection_reason"),
                 9,
             ),
+            0 if paper.get("metadata_screening_decision") == "uncertain" else 1,
             int(float(paper.get("year") or 9999)),
             paper.get("candidate_selection_citation_rank")
             if paper.get("candidate_selection_citation_rank") not in (None, "")
