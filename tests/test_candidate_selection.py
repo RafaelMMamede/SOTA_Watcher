@@ -133,6 +133,82 @@ class CandidateSelectionTests(unittest.TestCase):
         self.assertEqual(summary.core_protected, 2)
         self.assertEqual(summary.recent_unfiltered, 1)
 
+    def test_independent_stream_quotas_core_protection_and_overrides(self):
+        cfg = {
+            "candidate_selection": {
+                "enabled": True,
+                "historical_start_year": 2020,
+                "historical_through_year": 2024,
+                "recent_from_year": 2025,
+                "top_n_per_year_per_stream": 50,
+                "top_n_per_year_by_stream": {
+                    "visual_forgery_detection": 2,
+                    "adversarial_vision": 1,
+                },
+                "include_ties": True,
+            },
+        }
+        papers = [
+            paper("a1", citations=100, topic="adversarial_vision"),
+            paper("a2", citations=80, topic="adversarial_vision"),
+            paper("v1", citations=70, topic="visual_forgery_detection"),
+            paper("v2", citations=60, topic="visual_forgery_detection"),
+            paper("v3", citations=60, topic="visual_forgery_detection"),
+            paper("v4", citations=20, topic="visual_forgery_detection"),
+            paper("core", citations=0, topics=[
+                "visual_forgery_detection", "adversarial_vision",
+            ]),
+            paper("recent", year=2026, topic="adversarial_vision"),
+        ]
+
+        rows, policy, summary = build_candidate_selection(papers, cfg)
+        by_id = {row["corpus_id"]: row for row in rows}
+        self.assertEqual(by_id["a1"]["candidate_selection_citation_quota"], 1)
+        self.assertEqual(by_id["v1"]["candidate_selection_citation_quota"], 2)
+        self.assertEqual(by_id["a2"]["candidate_selection_status"], "not_selected")
+        self.assertEqual(by_id["v3"]["candidate_selection_status"], "selected")
+        self.assertEqual(by_id["v4"]["candidate_selection_status"], "not_selected")
+        self.assertEqual(by_id["core"]["candidate_selection_reason"], "core_protected")
+        self.assertEqual(by_id["recent"]["candidate_selection_reason"], "recent_unfiltered")
+        self.assertEqual(summary.citation_selected, 4)
+        self.assertEqual(
+            policy["top_n_per_year_by_stream"],
+            {"visual_forgery_detection": 2, "adversarial_vision": 1},
+        )
+
+        # Legacy --top-n sets both quotas, even when config contains overrides.
+        overridden, _, _ = build_candidate_selection(papers, cfg, top_n=2)
+        global_by_id = {row["corpus_id"]: row for row in overridden}
+        self.assertEqual(global_by_id["a2"]["candidate_selection_status"], "selected")
+        self.assertEqual(global_by_id["a2"]["candidate_selection_citation_quota"], 2)
+
+        # Per-stream flags can override the mapping without changing the config.
+        overridden, _, _ = build_candidate_selection(
+            papers, cfg, top_n_visual=1, top_n_adversarial=2,
+        )
+        stream_by_id = {row["corpus_id"]: row for row in overridden}
+        self.assertEqual(stream_by_id["a2"]["candidate_selection_status"], "selected")
+        self.assertEqual(stream_by_id["v2"]["candidate_selection_status"], "not_selected")
+        self.assertEqual(stream_by_id["v1"]["candidate_selection_citation_quota"], 1)
+
+    def test_invalid_per_stream_quotas_are_rejected(self):
+        for value in (0, -1, True, "10"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "positive integer"):
+                    build_candidate_selection([], {
+                        "candidate_selection": {
+                            "top_n_per_year_by_stream": {
+                                "adversarial_vision": value,
+                            },
+                        },
+                    })
+        with self.assertRaisesRegex(ValueError, "Unknown"):
+            build_candidate_selection([], {
+                "candidate_selection": {
+                    "top_n_per_year_by_stream": {"wrong_stream": 5},
+                },
+            })
+
     def test_generative_adversarial_network_does_not_trigger_core(self):
         cfg = {
             "candidate_selection": {
