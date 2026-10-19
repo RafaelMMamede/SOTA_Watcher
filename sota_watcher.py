@@ -159,6 +159,8 @@ def command_select_candidates(args, config):
             store,
             config,
             top_n=args.top_n,
+            top_n_visual=args.top_n_visual,
+            top_n_adversarial=args.top_n_adversarial,
             dry_run=args.dry_run,
         )
     print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
@@ -316,6 +318,18 @@ def build_parser():
         type=int,
         default=None,
         help='Override top cited contextual papers per year and stream.',
+    )
+    selection.add_argument(
+        '--top-n-visual',
+        type=int,
+        default=None,
+        help='Override historical quota/year for visual forgery detection.',
+    )
+    selection.add_argument(
+        '--top-n-adversarial',
+        type=int,
+        default=None,
+        help='Override historical quota/year for adversarial computer vision.',
     )
     selection.add_argument(
         '--dry-run',
