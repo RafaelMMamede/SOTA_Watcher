@@ -158,6 +158,11 @@ def candidate_selection_config(config: dict) -> dict:
             "top_n_per_year_per_stream",
             50,
         ),
+        # Optional quotas keyed by search-family ID; legacy global quota remains
+        # the fallback for configurations without per-stream overrides.
+        "top_n_per_year_by_stream": explicit.get(
+            "top_n_per_year_by_stream", {}
+        ),
         "include_ties": explicit.get("include_ties", True),
         "protect_both_streams": explicit.get("protect_both_streams", True),
         "protect_core_keywords": explicit.get("protect_core_keywords", True),
@@ -193,6 +198,23 @@ def _validate_config(cfg: dict):
         raise ValueError(
             "candidate_selection.top_n_per_year_per_stream must be positive."
         )
+    per_stream = cfg["top_n_per_year_by_stream"]
+    if not isinstance(per_stream, dict):
+        raise ValueError(
+            "candidate_selection.top_n_per_year_by_stream must be a mapping."
+        )
+    unknown = set(per_stream) - {STREAM_VISUAL, STREAM_ADVERSARIAL}
+    if unknown:
+        raise ValueError(
+            "Unknown candidate_selection.top_n_per_year_by_stream keys: "
+            f"{sorted(unknown)}"
+        )
+    for stream_id, quota in per_stream.items():
+        if type(quota) is not int or quota < 1:
+            raise ValueError(
+                "candidate_selection.top_n_per_year_by_stream."
+                f"{stream_id} must be a positive integer."
+            )
     if cfg["historical_start_year"] > cfg["historical_through_year"]:
         raise ValueError("candidate selection historical year range is invalid.")
     if cfg["recent_from_year"] <= cfg["historical_through_year"]:
@@ -365,13 +387,33 @@ def build_candidate_selection(
     config: dict,
     *,
     top_n: int | None = None,
+    top_n_visual: int | None = None,
+    top_n_adversarial: int | None = None,
 ) -> tuple[list[dict], dict, CandidateSelectionSummary]:
     """Apply the configured core-protection + citation-selection policy."""
     cfg = candidate_selection_config(config)
     if top_n is not None:
+        # A global CLI override intentionally replaces both stream-specific quotas.
         cfg["top_n_per_year_per_stream"] = top_n
+        cfg["top_n_per_year_by_stream"] = {}
+    if isinstance(cfg["top_n_per_year_by_stream"], dict):
+        cfg["top_n_per_year_by_stream"] = dict(
+            cfg["top_n_per_year_by_stream"]
+        )
+        if top_n_visual is not None:
+            cfg["top_n_per_year_by_stream"][STREAM_VISUAL] = top_n_visual
+        if top_n_adversarial is not None:
+            cfg["top_n_per_year_by_stream"][STREAM_ADVERSARIAL] = (
+                top_n_adversarial
+            )
     _validate_config(cfg)
 
+    base_quota = cfg["top_n_per_year_per_stream"]
+    per_stream = cfg["top_n_per_year_by_stream"]
+    quota_by_stream = {
+        "visual": per_stream.get(STREAM_VISUAL, base_quota),
+        "adversarial": per_stream.get(STREAM_ADVERSARIAL, base_quota),
+    }
     records = []
     historical_rankable = defaultdict(list)
 
@@ -395,9 +437,7 @@ def build_candidate_selection(
             "candidate_selection_year": year,
             "candidate_selection_citation_count": citation,
             "candidate_selection_citation_rank": None,
-            "candidate_selection_citation_quota": (
-                cfg["top_n_per_year_per_stream"]
-            ),
+            "candidate_selection_citation_quota": quota_by_stream.get(stream),
             "candidate_selection_core_protected": protected,
             "candidate_selection_core_reason": protected_reason,
             "candidate_selection_citation_metric": cfg["citation_metric"],
@@ -458,9 +498,9 @@ def build_candidate_selection(
         records.append(row)
 
     rows_by_id = {row["corpus_id"]: row for row in records}
-    quota = cfg["top_n_per_year_per_stream"]
 
     for (year, stream), items in historical_rankable.items():
+        quota = quota_by_stream[stream]
         ranks = _rank_with_ties(items)
         ordered_counts = sorted(
             (row["citation_count"] for row in items),
@@ -574,12 +614,16 @@ def run_candidate_selection(
     config: dict,
     *,
     top_n: int | None = None,
+    top_n_visual: int | None = None,
+    top_n_adversarial: int | None = None,
     dry_run: bool = False,
 ):
     records, policy, summary = build_candidate_selection(
         store.all_papers(),
         config,
         top_n=top_n,
+        top_n_visual=top_n_visual,
+        top_n_adversarial=top_n_adversarial,
     )
     summary.dry_run = dry_run
 
