@@ -47,22 +47,22 @@ fulltext_resolution:
 
 candidate_selection:
   # Deterministic gate before title/abstract screening.
-  # Potential core papers are always protected. For established contextual
-  # literature, rank separately within publication year x search stream.
+  # Potential core papers are always protected. Supporting papers from
+  # 2020-2026 use citation ranking independently within each year x stream.
   enabled: true
   historical_start_year: 2020
-  historical_through_year: 2024
-  recent_from_year: 2025
+  historical_through_year: 2026
+  recent_from_year: 2027
   top_n_per_year_per_stream: 50
-  # Override the historical quota for each supporting search stream.
-  # Core-protected papers bypass these limits; recent papers use venue rules.
+  # Per-year quotas for supporting literature (including 2025 and 2026).
+  # Core-protected papers bypass all citation quotas and venue filters.
   top_n_per_year_by_stream:
     visual_forgery_detection: 20
     adversarial_vision: 10
-  # Recent non-core papers are too new for stable citation ranking. Keep them
-  # only when a merged venue value matches this pre-specified whitelist.
-  # Core-protected papers bypass this filter. Missing recent venue metadata is
-  # kept unresolved rather than silently excluded.
+  # Optional venue filter applies only from recent_from_year (2027 onward),
+  # not to 2025-2026. Keep the list for future extension of the review period.
+  # Core-protected papers bypass this filter. Missing venue metadata is
+  # kept unresolved rather than silently excluded when this filter is active.
   recent_venue_filter:
     enabled: true
     venues:
