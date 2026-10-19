@@ -229,9 +229,10 @@ The default candidate-selection policy is:
 - automatically protect papers retrieved by both search families;
 - also protect title/abstract records containing both deepfake/forgery and
   adversarial/robustness concepts;
-- for contextual papers from 2020--2024, rank separately within
-  publication year × retrieval stream and retain the top 50 cited papers;
-- include all papers tied with the 50th paper;
+- for contextual papers from 2020--2024, rank separately within publication
+  year × retrieval stream; the example policy retains the top 20 visual-forgery
+  papers and top 10 adversarial-vision papers per year;
+- include citation ties at each stream's configured cutoff;
 - for non-core papers from 2025 onward, avoid immature citation counts and
   retain only records whose merged venue metadata matches the pre-specified
   reputable-venue whitelist in `candidate_selection.recent_venue_filter`;
@@ -263,8 +264,22 @@ Activate the selection:
 python sota_watcher.py select-candidates
 ```
 
-Use `--top-n N` to pilot another historical quota. The complete decision for
-every corpus record, including stream, year, citation count/rank, core-protection
+Use `--top-n N` to override both historical quotas, or
+`--top-n-visual 20 --top-n-adversarial 10` to test independent stream quotas
+without editing `config.yaml`. The optional
+`candidate_selection.top_n_per_year_by_stream` mapping uses search-family IDs
+(`visual_forgery_detection` and `adversarial_vision`); the legacy
+`top_n_per_year_per_stream` acts as the fallback. For example:
+
+```bash
+python sota_watcher.py select-candidates --dry-run --top-n-visual 20 --top-n-adversarial 10
+```
+
+Running `--dry-run` writes a preview manifest without modifying active
+selection or human decisions. Applying the same command without `--dry-run`
+updates only the active candidate-selection set; saved human decisions remain.
+The complete decision for every corpus record, including stream, year,
+citation count/rank, core-protection
 reason and selection reason, is written to a JSON manifest under
 `candidate_selection/` and persisted in SQLite. `status` reports the current
 selection counts.
