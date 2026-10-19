@@ -65,6 +65,98 @@ class HumanReviewTests(unittest.TestCase):
         )
         return store, ids
 
+    def test_uncertain_model_decisions_are_prioritized_within_selection_groups(self):
+        papers = [
+            {
+                "corpus_id": "core-include",
+                "candidate_selection_status": "selected",
+                "candidate_selection_reason": "core_protected",
+                "year": 2020,
+                "metadata_screening_decision": "include",
+            },
+            {
+                "corpus_id": "citation-include",
+                "candidate_selection_status": "selected",
+                "candidate_selection_reason": "citation_top_n",
+                "year": 2021,
+                "metadata_screening_decision": "include",
+            },
+            {
+                "corpus_id": "core-uncertain",
+                "candidate_selection_status": "selected",
+                "candidate_selection_reason": "core_protected",
+                "year": 2024,
+                "metadata_screening_decision": "uncertain",
+            },
+            {
+                "corpus_id": "citation-uncertain",
+                "candidate_selection_status": "selected",
+                "candidate_selection_reason": "citation_top_n",
+                "year": 2024,
+                "metadata_screening_decision": "uncertain",
+            },
+            {
+                "corpus_id": "recent-include",
+                "candidate_selection_status": "selected",
+                "candidate_selection_reason": "recent_reputable_venue",
+                "year": 2025,
+                "metadata_screening_decision": "include",
+            },
+            {
+                "corpus_id": "recent-uncertain",
+                "candidate_selection_status": "selected",
+                "candidate_selection_reason": "recent_reputable_venue",
+                "year": 2026,
+                "metadata_screening_decision": "uncertain",
+            },
+            {
+                "corpus_id": "already-reviewed-core",
+                "candidate_selection_status": "selected",
+                "candidate_selection_reason": "core_protected",
+                "year": 2020,
+                "metadata_screening_decision": "uncertain",
+                "human_metadata_screening_decision": "include",
+            },
+            {
+                "corpus_id": "unselected-uncertain",
+                "candidate_selection_status": "not_selected",
+                "candidate_selection_reason": "citation_below_quota",
+                "year": 2020,
+                "metadata_screening_decision": "uncertain",
+            },
+        ]
+
+        class StubStore:
+            def all_papers(self):
+                return papers
+
+            def latest_candidate_selection_run(self):
+                return {"run_id": "active"}
+
+        pending, summary = select_for_human_screening(StubStore())
+        self.assertEqual(
+            [paper["corpus_id"] for paper in pending],
+            [
+                "core-uncertain",
+                "core-include",
+                "citation-uncertain",
+                "citation-include",
+                "recent-uncertain",
+                "recent-include",
+            ],
+        )
+        self.assertEqual(summary.eligible_pool, 7)
+        self.assertEqual(summary.already_reviewed, 1)
+        self.assertEqual(summary.remaining, 6)
+
+        core_pending, _ = select_for_human_screening(
+            StubStore(), core_only=True,
+        )
+        self.assertEqual(
+            [paper["corpus_id"] for paper in core_pending],
+            ["core-uncertain", "core-include"],
+        )
+
     def test_core_only_filters_to_core_protected_candidates(self):
         with tempfile.TemporaryDirectory() as folder:
             store, ids = self._selected_store(folder)
