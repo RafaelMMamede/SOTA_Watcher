@@ -161,6 +161,7 @@ def command_select_candidates(args, config):
             top_n=args.top_n,
             top_n_visual=args.top_n_visual,
             top_n_adversarial=args.top_n_adversarial,
+            citation_through_year=args.citation_through_year,
             dry_run=args.dry_run,
         )
     print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
@@ -330,6 +331,15 @@ def build_parser():
         type=int,
         default=None,
         help='Override historical quota/year for adversarial computer vision.',
+    )
+    selection.add_argument(
+        '--citation-through-year',
+        type=int,
+        default=None,
+        help=(
+            'Use citation quotas for supporting papers through this year '
+            '(and start the venue-only policy the following year).'
+        ),
     )
     selection.add_argument(
         '--dry-run',
