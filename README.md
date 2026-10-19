@@ -229,28 +229,33 @@ The default candidate-selection policy is:
 - automatically protect papers retrieved by both search families;
 - also protect title/abstract records containing both deepfake/forgery and
   adversarial/robustness concepts;
-- for contextual papers from 2020--2024, rank separately within publication
+- for supporting papers from 2020--2026, rank separately within publication
   year × retrieval stream; the example policy retains the top 20 visual-forgery
-  papers and top 10 adversarial-vision papers per year;
+  papers and top 10 adversarial-vision papers per year, **including 2025 and 2026**;
 - include citation ties at each stream's configured cutoff;
-- for non-core papers from 2025 onward, avoid immature citation counts and
-  retain only records whose merged venue metadata matches the pre-specified
-  reputable-venue whitelist in `candidate_selection.recent_venue_filter`;
+- only for non-core papers from 2027 onward (if present), use the
+  pre-specified reputable-venue whitelist instead of citations;
 - inspect both the canonical `venue` and merged `metadata_variants.venue`
   values, so an arXiv manifestation does not hide a matched published venue;
-- keep recent records with no usable venue metadata as `unresolved` rather
-  than silently excluding them;
-- keep historical records without citation counts as `unresolved` rather than
-  treating missing citations as zero.
+- keep venue-filtered records without usable venue metadata as `unresolved`
+  rather than silently excluding them;
+- keep citation-ranked records without citation counts as `unresolved` rather
+  than treating missing citations as zero.
 
-The recent venue whitelist is explicit and auditable. Each venue has a canonical
-name plus aliases to accommodate provider naming differences. Known recent
-venues outside the whitelist receive
+The optional venue whitelist is explicit and auditable, but it does **not**
+select papers in 2025--2026 under the current policy. Each venue has a canonical
+name plus aliases to accommodate provider naming differences. For future years
+covered by the venue rule, venues outside the whitelist receive
 `recent_venue_not_whitelisted`; accepted records receive
 `recent_reputable_venue`; missing venue metadata receives
-`recent_venue_unavailable`. The manifest also reports recent accepted counts by
-year, stream, and canonical venue. See `config.example.yaml` for the initial
-CV/ML/security/journal whitelist.
+`recent_venue_unavailable`. The manifest reports accepted counts by year,
+stream, and venue when this rule applies.
+
+Citation-based selection of 2025--2026 supporting papers is a deliberate
+contextual sampling choice. It biases toward earlier publications and
+well-cited topics; it must not be described as exhaustive coverage of the
+supporting streams. Inspect the year/stream selection counts for ties at zero
+citations, which can cause the selected group to exceed its nominal quota.
 
 Preview the reduction without changing the active corpus state:
 
@@ -274,6 +279,24 @@ without editing `config.yaml`. The optional
 ```bash
 python sota_watcher.py select-candidates --dry-run --top-n-visual 20 --top-n-adversarial 10
 ```
+
+To apply citation quotas to 2025 and 2026 **even when your existing local
+`config.yaml` still sets the older 2024/2025 boundary**, use
+`--citation-through-year 2026`. This advances the venue-only start to 2027
+for that run. Preview the exact proposed policy:
+
+```bash
+python sota_watcher.py select-candidates --dry-run \
+  --citation-through-year 2026 \
+  --top-n-visual 20 --top-n-adversarial 10
+```
+
+Then activate the identical policy by omitting `--dry-run`.
+For future runs without CLI overrides, also update your local
+`config.yaml` with `historical_through_year: 2026` and
+`recent_from_year: 2027`, alongside your existing per-stream quotas.
+`config.example.yaml` contains these defaults, but updating that tracked
+example does not automatically change your local file.
 
 Running `--dry-run` writes a preview manifest without modifying active
 selection or human decisions. Applying the same command without `--dry-run`
