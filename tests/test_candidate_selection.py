@@ -209,6 +209,114 @@ class CandidateSelectionTests(unittest.TestCase):
                 },
             })
 
+    def test_2025_2026_use_stream_citation_quotas_and_keep_core(self):
+        cfg = {
+            "candidate_selection": {
+                "enabled": True,
+                "historical_start_year": 2020,
+                "historical_through_year": 2026,
+                "recent_from_year": 2027,
+                "top_n_per_year_by_stream": {
+                    "visual_forgery_detection": 2,
+                    "adversarial_vision": 1,
+                },
+                "include_ties": True,
+                "recent_venue_filter": {
+                    "enabled": True,
+                    "venues": ["CVPR"],
+                },
+            },
+        }
+        papers = [
+            paper("v25-1", year=2025, citations=50,
+                  topic="visual_forgery_detection", venue="arXiv"),
+            paper("v25-2", year=2025, citations=40,
+                  topic="visual_forgery_detection", venue="CVPR"),
+            paper("v25-3", year=2025, citations=5,
+                  topic="visual_forgery_detection", venue="CVPR"),
+            paper("a25-1", year=2025, citations=20, venue="arXiv"),
+            paper("a25-2", year=2025, citations=10, venue="CVPR"),
+            paper("v26-1", year=2026, citations=8,
+                  topic="visual_forgery_detection", venue="arXiv"),
+            paper("v26-2", year=2026, citations=2,
+                  topic="visual_forgery_detection", venue="CVPR"),
+            paper("v26-3", year=2026, citations=1,
+                  topic="visual_forgery_detection", venue="CVPR"),
+            paper("a26-1", year=2026, citations=3, venue="arXiv"),
+            paper("a26-2", year=2026, citations=0, venue="CVPR"),
+            # Core must remain selected even with no citations or venue.
+            paper("core26", year=2026, citations=None,
+                  topics=["visual_forgery_detection", "adversarial_vision"]),
+            # The venue-only branch still applies after the citation window.
+            paper("future-venue", year=2027, citations=0, venue="CVPR"),
+            paper("future-no-venue", year=2027, citations=500, venue="arXiv"),
+        ]
+        rows, policy, summary = build_candidate_selection(papers, cfg)
+        by_id = {row["corpus_id"]: row for row in rows}
+        for selected in ("v25-1", "v25-2", "a25-1", "v26-1",
+                         "v26-2", "a26-1", "core26", "future-venue"):
+            self.assertEqual(by_id[selected]["candidate_selection_status"],
+                             "selected", selected)
+        for excluded in ("v25-3", "a25-2", "v26-3", "a26-2",
+                         "future-no-venue"):
+            self.assertEqual(by_id[excluded]["candidate_selection_status"],
+                             "not_selected", excluded)
+        self.assertEqual(by_id["v26-1"]["candidate_selection_citation_quota"], 2)
+        self.assertEqual(by_id["a26-1"]["candidate_selection_citation_quota"], 1)
+        self.assertEqual(by_id["core26"]["candidate_selection_reason"],
+                         "core_protected")
+        self.assertEqual(by_id["a26-2"]["candidate_selection_reason"],
+                         "citation_below_quota")
+        self.assertEqual(by_id["future-venue"]["candidate_selection_reason"],
+                         "recent_reputable_venue")
+        self.assertEqual(policy["historical_through_year"], 2026)
+        self.assertEqual(summary.citation_selected, 6)
+        self.assertEqual(summary.core_protected, 1)
+
+    def test_citation_through_year_override_works_with_old_local_config(self):
+        cfg = {
+            "candidate_selection": {
+                "historical_start_year": 2020,
+                "historical_through_year": 2024,
+                "recent_from_year": 2025,
+                "top_n_per_year_by_stream": {
+                    "visual_forgery_detection": 1,
+                    "adversarial_vision": 1,
+                },
+                "recent_venue_filter": {
+                    "enabled": True,
+                    "venues": ["CVPR"],
+                },
+            },
+        }
+        papers = [
+            paper("new-high", year=2026, citations=8, venue="arXiv"),
+            paper("new-low", year=2026, citations=1, venue="CVPR"),
+            paper("core", year=2026, citations=0,
+                  topics=["visual_forgery_detection", "adversarial_vision"]),
+        ]
+        old_rows, _, _ = build_candidate_selection(papers, cfg)
+        old = {r["corpus_id"]: r for r in old_rows}
+        self.assertEqual(old["new-high"]["candidate_selection_status"],
+                         "not_selected")
+        self.assertEqual(old["new-low"]["candidate_selection_status"],
+                         "selected")
+
+        rows, policy, _ = build_candidate_selection(
+            papers, cfg, citation_through_year=2026,
+        )
+        by_id = {r["corpus_id"]: r for r in rows}
+        self.assertEqual(by_id["new-high"]["candidate_selection_status"],
+                         "selected")
+        self.assertEqual(by_id["new-low"]["candidate_selection_status"],
+                         "not_selected")
+        self.assertEqual(by_id["core"]["candidate_selection_reason"],
+                         "core_protected")
+        self.assertEqual(policy["historical_through_year"], 2026)
+        self.assertEqual(policy["recent_from_year"], 2027)
+        self.assertEqual(cfg["candidate_selection"]["historical_through_year"],
+                         2024)
+
     def test_generative_adversarial_network_does_not_trigger_core(self):
         cfg = {
             "candidate_selection": {
