@@ -146,8 +146,8 @@ def candidate_selection_config(config: dict) -> dict:
     return {
         "enabled": explicit.get("enabled", False),
         "historical_start_year": explicit.get("historical_start_year", 2020),
-        "historical_through_year": explicit.get("historical_through_year", 2024),
-        "recent_from_year": explicit.get("recent_from_year", 2025),
+        "historical_through_year": explicit.get("historical_through_year", 2026),
+        "recent_from_year": explicit.get("recent_from_year", 2027),
         "recent_venue_filter": {
             "enabled": recent_venue_filter.get("enabled", False),
             "venues": _normalize_venue_policy(
@@ -389,9 +389,16 @@ def build_candidate_selection(
     top_n: int | None = None,
     top_n_visual: int | None = None,
     top_n_adversarial: int | None = None,
+    citation_through_year: int | None = None,
 ) -> tuple[list[dict], dict, CandidateSelectionSummary]:
     """Apply the configured core-protection + citation-selection policy."""
     cfg = candidate_selection_config(config)
+    if citation_through_year is not None:
+        if type(citation_through_year) is not int:
+            raise ValueError("citation_through_year must be an integer.")
+        cfg["historical_through_year"] = citation_through_year
+        # The venue-only branch must start strictly after the citation window.
+        cfg["recent_from_year"] = citation_through_year + 1
     if top_n is not None:
         # A global CLI override intentionally replaces both stream-specific quotas.
         cfg["top_n_per_year_per_stream"] = top_n
@@ -616,6 +623,7 @@ def run_candidate_selection(
     top_n: int | None = None,
     top_n_visual: int | None = None,
     top_n_adversarial: int | None = None,
+    citation_through_year: int | None = None,
     dry_run: bool = False,
 ):
     records, policy, summary = build_candidate_selection(
@@ -624,6 +632,7 @@ def run_candidate_selection(
         top_n=top_n,
         top_n_visual=top_n_visual,
         top_n_adversarial=top_n_adversarial,
+        citation_through_year=citation_through_year,
     )
     summary.dry_run = dry_run
 
