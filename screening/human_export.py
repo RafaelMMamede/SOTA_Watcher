@@ -275,3 +275,107 @@ def export_human_included_docx(store, path, *, include_abstracts=True):
         "abstracts_included": include_abstracts,
         "active_run": active_run.get("run_id", ""),
     }
+
+
+def export_human_included_markdown(store, path, *, include_abstracts=True):
+    """Export human-included records as plain-text Markdown for LLM review."""
+    papers, counts, active_run = load_human_included(store)
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    selected_total = sum(counts.values())
+    lines = [
+        "# SOTA_Watcher — Human-Selected Papers",
+        "",
+        "**Screening stage:** Human title/abstract inclusion (not final full-text eligibility)",
+        f"**Exported:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"**Candidate selection run:** {_text(active_run.get('run_id'))}",
+        f"**Selected candidate pool:** {selected_total}",
+        f"**Human included:** {len(papers)}",
+        f"**Human excluded:** {counts.get('exclude', 0)}",
+        f"**Human uncertain:** {counts.get('uncertain', 0)}",
+        f"**Not yet human reviewed:** {counts.get('pending', 0)}",
+        "",
+        "This document contains ONLY the currently selected candidates marked",
+        "`include` by the human title/abstract reviewer. It does not contain",
+        "human-excluded candidates or final full-text eligibility decisions.",
+        "",
+        "## Distribution by year and selection category",
+        "",
+        "| Year | Core | Supporting | Total |",
+        "|---|---:|---:|---:|",
+    ]
+    distribution = Counter(
+        (
+            _year(p.get("year")) or "Unknown",
+            "Core" if p.get("candidate_selection_core_protected") else "Supporting",
+        )
+        for p in papers
+    )
+    years = sorted(
+        {year for year, _ in distribution},
+        key=lambda v: str(v),
+        reverse=True,
+    )
+    for year in years:
+        core = distribution.get((year, "Core"), 0)
+        support = distribution.get((year, "Supporting"), 0)
+        lines.append(f"| {year} | {core} | {support} | {core + support} |")
+    lines.extend(["", "## Included papers", ""])
+
+    category = None
+    current_year = None
+    for index, paper in enumerate(papers, start=1):
+        new_category = (
+            "Core literature"
+            if paper.get("candidate_selection_core_protected")
+            else "Supporting literature"
+        )
+        year = _year(paper.get("year")) or "Unknown"
+        if new_category != category:
+            category = new_category
+            current_year = None
+            lines.extend([f"### {category}", ""])
+        if year != current_year:
+            current_year = year
+            lines.extend([f"#### {year}", ""])
+
+        title = _text(paper.get("title"), "Untitled paper").replace("\\n", " ")
+        lines.extend([
+            f"##### {index}. {title}",
+            "",
+            f"- **Corpus ID:** {_text(paper.get('corpus_id'))}",
+            f"- **Year:** {year}",
+            f"- **Venue:** {_text(paper.get('venue'))}",
+            f"- **Citations:** {_text(paper.get('citation_count'))}",
+            f"- **Stream:** {_text(paper.get('candidate_selection_stream'))}",
+            f"- **Selection reason:** {_text(paper.get('candidate_selection_reason'))}",
+            f"- **DOI:** {_text(paper.get('doi'))}",
+            f"- **URL:** {_text(paper.get('url'))}",
+        ])
+        authors = _authors(paper.get("authors"))
+        if authors:
+            lines.append(f"- **Authors:** {authors}")
+        sources = _list_field(paper.get("sources")) or _list_field(paper.get("source"))
+        if sources:
+            lines.append(f"- **Discovery sources:** {', '.join(sources)}")
+        if include_abstracts:
+            abstract = _text(paper.get("abstract")).replace("\\n", " ").strip()
+            lines.extend(["", f"**Abstract:** {abstract}"])
+        notes = _text(paper.get("human_metadata_screening_notes"), "")
+        if notes:
+            lines.extend(["", f"**Human notes:** {notes}"])
+        lines.append("")
+
+    output.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+    return {
+        "path": str(output),
+        "selected": selected_total,
+        "human_included": len(papers),
+        "human_excluded": counts.get("exclude", 0),
+        "human_uncertain": counts.get("uncertain", 0),
+        "pending": counts.get("pending", 0),
+        "abstracts_included": include_abstracts,
+        "active_run": active_run.get("run_id", ""),
+        "format": "markdown",
+    }
