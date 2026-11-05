@@ -105,6 +105,24 @@ class HumanExportTests(unittest.TestCase):
             self.assertNotIn("Abstract of core", text)
             self.assertFalse(result["abstracts_included"])
 
+    def test_markdown_export_is_chat_readable(self):
+        from screening.human_export import export_human_included_markdown
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "included.md"
+            result = export_human_included_markdown(self.store, path)
+            self.assertEqual(result["human_included"], 2)
+            content = path.read_text(encoding="utf-8")
+            self.assertIn("# SOTA_Watcher", content)
+            self.assertIn("Title of core", content)
+            self.assertIn("Title of support", content)
+            self.assertIn("Abstract of core", content)
+            self.assertIn("10.1000/core", content)
+            self.assertNotIn("Title of rejected", content)
+            self.assertNotIn("Title of dropped", content)
+            self.assertIn("## Included papers", content)
+            self.assertGreater(content.count("\\n"), 15)
+
     def test_requires_active_candidate_selection(self):
         self.store.run = None
         with tempfile.TemporaryDirectory() as directory:
