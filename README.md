@@ -424,6 +424,34 @@ the active candidate-selection gate. SQLite uses WAL mode with a short busy
 timeout, so the helper can coexist with ongoing model metadata screening, though
 running large write-heavy jobs concurrently may still reduce throughput.
 
+### Export human-included papers to Word
+
+After human title/abstract screening, export the **human-included papers in the
+active candidate-selection pool** to a Word document (with title, authors,
+year, venue, citations, DOI, URL, stream, selection reason, discovery sources,
+corpus ID, abstract, and any human notes):
+
+```bash
+python -m pip install -r requirements.txt
+python sota_watcher.py export-human-included
+```
+
+The default output is `output/human_screened_included.docx`. Optionally choose a
+different file or omit abstracts for a shorter bibliography:
+
+```bash
+python sota_watcher.py export-human-included output/included_papers.docx
+python sota_watcher.py export-human-included --no-abstracts
+```
+
+This command **reads SQLite directly** and does not import/export an Excel file,
+change any screening decisions, or alter the candidate pool. Only human metadata
+`include` decisions in the **currently active** selected pool are exported.
+Human-excluded papers and old decisions for papers outside the active pool are
+omitted. The document also contains counts and an included-paper summary by
+year and core/support category. Human metadata inclusion is provisional; a
+full-text decision is still required.
+
 ## Full-text screening
 
 Review the eligibility criteria and ensure your configured Ollama model is
