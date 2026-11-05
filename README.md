@@ -444,6 +444,18 @@ python sota_watcher.py export-human-included output/included_papers.docx
 python sota_watcher.py export-human-included --no-abstracts
 ```
 
+For a ChatGPT assessment of topical coverage and gaps, **Markdown with
+abstracts is preferred**:
+
+```bash
+python sota_watcher.py export-human-included --format markdown
+```
+
+Upload `output/human_screened_included.md` to ChatGPT. The file contains
+structured core/support categories, years, titles, abstracts, DOI/URL,
+selection reasons, and a compact count summary. For very large pools,
+start with a high-level assessment and then review narrower subsets.
+
 This command **reads SQLite directly** and does not import/export an Excel file,
 change any screening decisions, or alter the candidate pool. Only human metadata
 `include` decisions in the **currently active** selected pool are exported.
