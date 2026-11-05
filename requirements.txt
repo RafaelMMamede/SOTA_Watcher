@@ -7,3 +7,4 @@ tqdm
 pymupdf4llm==1.28.2
 pymupdf==1.28.2
 python-dotenv
+python-docx>=1.2,<2
