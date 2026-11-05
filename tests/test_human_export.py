@@ -121,7 +121,7 @@ class HumanExportTests(unittest.TestCase):
             self.assertNotIn("Title of rejected", content)
             self.assertNotIn("Title of dropped", content)
             self.assertIn("## Included papers", content)
-            self.assertGreater(content.count("\\n"), 15)
+            self.assertGreater(content.count("\n"), 15)
 
     def test_requires_active_candidate_selection(self):
         self.store.run = None
