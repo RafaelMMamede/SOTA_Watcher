@@ -340,7 +340,7 @@ def export_human_included_markdown(store, path, *, include_abstracts=True):
             current_year = year
             lines.extend([f"#### {year}", ""])
 
-        title = _text(paper.get("title"), "Untitled paper").replace("\\n", " ")
+        title = _text(paper.get("title"), "Untitled paper").replace("\n", " ")
         lines.extend([
             f"##### {index}. {title}",
             "",
@@ -360,14 +360,14 @@ def export_human_included_markdown(store, path, *, include_abstracts=True):
         if sources:
             lines.append(f"- **Discovery sources:** {', '.join(sources)}")
         if include_abstracts:
-            abstract = _text(paper.get("abstract")).replace("\\n", " ").strip()
+            abstract = _text(paper.get("abstract")).replace("\n", " ").strip()
             lines.extend(["", f"**Abstract:** {abstract}"])
         notes = _text(paper.get("human_metadata_screening_notes"), "")
         if notes:
             lines.extend(["", f"**Human notes:** {notes}"])
         lines.append("")
 
-    output.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {
         "path": str(output),
         "selected": selected_total,
