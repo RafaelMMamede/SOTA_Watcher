@@ -19,6 +19,7 @@ from screening import screen_papers
 from screening.queue import screen_saved_corpus
 from screening.candidate_selection import run_candidate_selection
 from screening.human_review import run_human_screening
+from screening.human_export import export_human_included_docx
 from screening.metadata_queue import metadata_config, screen_saved_metadata
 from utils.reporting import decorate, review_counts, summary_markdown
 from fulltext._common import read_json
@@ -212,6 +213,17 @@ def command_human_screen(args, config):
     print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
 
 
+def command_export_human_included(args, config):
+    path = args.path or str(
+        Path(config.get('output_dir', 'output')) / 'human_screened_included.docx'
+    )
+    with CorpusStore(_store_path(config)) as store:
+        result = export_human_included_docx(
+            store, path, include_abstracts=not args.no_abstracts,
+        )
+    print(json.dumps(result, indent=2, sort_keys=True))
+
+
 def command_screen_metadata(args, config, terms):
     retry_error = args.retry == "error"
     limit = args.limit
@@ -391,6 +403,22 @@ def build_parser():
         help='Include papers that already have a human decision.',
     )
 
+    human_export = sub.add_parser(
+        'export-human-included',
+        help=(
+            'Create a Word document with human-included papers from '
+            'the active candidate-selection pool.'
+        ),
+    )
+    human_export.add_argument(
+        'path', nargs='?', default=None,
+        help='Output DOCX path (default: output/human_screened_included.docx).',
+    )
+    human_export.add_argument(
+        '--no-abstracts', action='store_true',
+        help='Exclude abstracts for a more compact bibliography document.',
+    )
+
     metadata = sub.add_parser(
         'screen-metadata',
         help='Screen titles/abstracts before full-text retrieval.',
@@ -472,6 +500,8 @@ def main(argv=None):
         command_reset_metadata_screening(args, config)
     elif args.command == 'human-screen':
         command_human_screen(args, config)
+    elif args.command == 'export-human-included':
+        command_export_human_included(args, config)
     elif args.command == 'screen-metadata':
         command_screen_metadata(args, config, _load_protocol(config))
     elif args.command == 'screen':
