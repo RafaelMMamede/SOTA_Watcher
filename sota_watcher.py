@@ -19,7 +19,7 @@ from screening import screen_papers
 from screening.queue import screen_saved_corpus
 from screening.candidate_selection import run_candidate_selection
 from screening.human_review import run_human_screening
-from screening.human_export import export_human_included_docx
+from screening.human_export import export_human_included_docx, export_human_included_markdown
 from screening.metadata_queue import metadata_config, screen_saved_metadata
 from utils.reporting import decorate, review_counts, summary_markdown
 from fulltext._common import read_json
@@ -214,11 +214,21 @@ def command_human_screen(args, config):
 
 
 def command_export_human_included(args, config):
+    suffix = '.md' if args.format == 'markdown' else '.docx'
     path = args.path or str(
-        Path(config.get('output_dir', 'output')) / 'human_screened_included.docx'
+        Path(config.get('output_dir', 'output')) / ('human_screened_included' + suffix)
+    )
+    if Path(path).suffix.lower() != suffix:
+        raise ValueError(
+            f"Output must end in {suffix} for --format {args.format}."
+        )
+    export_fn = (
+        export_human_included_markdown
+        if args.format == 'markdown'
+        else export_human_included_docx
     )
     with CorpusStore(_store_path(config)) as store:
-        result = export_human_included_docx(
+        result = export_fn(
             store, path, include_abstracts=not args.no_abstracts,
         )
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -412,7 +422,11 @@ def build_parser():
     )
     human_export.add_argument(
         'path', nargs='?', default=None,
-        help='Output DOCX path (default: output/human_screened_included.docx).',
+        help='Output DOCX or Markdown path (default: output/human_screened_included.<ext>).',
+    )
+    human_export.add_argument(
+        '--format', choices=['docx', 'markdown'], default='docx',
+        help='Use markdown for uploading a structured, machine-readable literature list to ChatGPT.',
     )
     human_export.add_argument(
         '--no-abstracts', action='store_true',
